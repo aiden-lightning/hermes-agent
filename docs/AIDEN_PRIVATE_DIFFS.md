@@ -21,6 +21,17 @@
 
 ## 2. 私有改动总览
 
+### 2.0 Aiden 分发入口与安装脚本
+
+私有分支将面向用户的最小安装/仓库入口指向 Aiden fork：
+
+- `README.md`
+- `scripts/install.sh`
+- `scripts/install.ps1`
+- `scripts/install.cmd`
+
+这些文件中的安装命令、clone URL、Windows fallback zip URL、README issues/license 链接使用 `aiden-lightning/hermes-agent`，避免用户通过 Aiden 私有分支 README 或安装脚本继续安装官方上游仓库。
+
 ### 2.1 Feishu / Lark 深度增强
 
 这是私有分支最大的差异区域，核心文件主要是：
