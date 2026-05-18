@@ -4,7 +4,7 @@
 > 仓库：`/Users/dev/.hermes/hermes-agent`  
 > 本地私有分支：`main` / `origin/main` (`git@github.com:aiden-lightning/hermes-agent.git`)  
 > 官方上游：`upstream/main` (`https://github.com/NousResearch/hermes-agent.git`)
-> 最后同步：2026-05-14 — `git merge upstream/main` 完成，172 commits merged。
+> 最后同步：2026-05-18 — `git merge upstream/main` 完成，413 commits merged。
 
 本文记录 `biden-agent` 与 `aiden-lightning` 两个 Git 作者在私有分支上相对官方代码保留的主要改动，用于后续同步上游、排查行为差异、以及判断哪些补丁需要继续维护或尝试 upstream。
 
@@ -365,7 +365,16 @@ Merge commits：
    - `.gitmodules` 与 `moss_tts_nano_repo` 需要在 clone/update 时保持可用。
    - 相关测试应确保无模型权重环境下仍可 mock 通过。
 
-5. **最近一次 upstream 同步（2026-05-14）**
+5. **最近一次 upstream 同步（2026-05-18）**
+   - 合并 413 个上游 commits。
+   - 冲突解决位于 `.gitmodules`、`gateway/platforms/base.py`、`gateway/run.py`、`run_agent.py`、`tools/cronjob_tools.py`、`tools/tts_tool.py`。
+   - `.gitmodules` 保留私有 `moss_tts_nano_repo` submodule，删除上游已移除/本地不存在的 `tinker-atropos` submodule。
+   - `gateway/run.py` 合并私有审批 metadata（`user_id` / `user_id_alt` / thread metadata）与上游 `safe_schedule_threadsafe` 调度、platform reconnect/circuit-breaker、session/gateway lifecycle 改动。
+   - `run_agent.py` 保留私有 `AIAgent` constructor/session-search/tool-observability 兼容行为，同时吸收上游模块拆分后的相关导入与辅助行为。
+   - `tools/cronjob_tools.py` 合并上游 name-based `resolve_job_ref` 与私有 gateway cron owner/ACL 检查。
+   - `tools/tts_tool.py` 合并上游 xAI OAuth credential 检测/说明与私有 MOSS-TTS-Nano provider 文档和行为。
+
+6. **上一轮 upstream 同步（2026-05-14）**
    - 合并 172 个上游 commits。
    - 冲突解决位于 `gateway/run.py`、`hermes_cli/memory_setup.py`。
    - `gateway/run.py` 同时保留 Aiden per-user/platform command permission enforcement 与上游 free-form `clarify` reply interception；非 slash 文本仅在同 session 存在 pending clarify 时先解析为答案，slash command 与其它普通文本仍走权限检查。
@@ -409,7 +418,46 @@ Merge commits：
 
 ## 6. 历次上游同步冲突解决记录
 
-### 6.1 本次上游同步冲突解决记录（2026-05-14）
+### 6.1 本次上游同步冲突解决记录（2026-05-18）
+
+合并 413 个 upstream commits，6 个文件存在冲突。以下为每处冲突的解决策略：
+
+#### 6.1.1 `.gitmodules`
+
+- 上游删除 `tinker-atropos` submodule；私有分支仍有 `moss_tts_nano_repo`。
+- 解决策略：删除 `tinker-atropos` entry，保留私有 MOSS-TTS-Nano submodule entry。
+
+#### 6.1.2 `gateway/platforms/base.py`
+
+- 冲突点在 platform message metadata / channel context / TTS text preparation 附近。
+- 解决策略：保留上游 `channel_context` 字段、clarify fallback text capture、rapid text merge 行为，同时保留私有 `prepare_tts_text(...)` hook 供平台过滤 TTS 文本。
+
+#### 6.1.3 `gateway/run.py`
+
+- 冲突点集中在 startup/reconnect lifecycle、Feishu approval metadata、thread/user identity、safe cross-thread scheduling。
+- 解决策略：合并私有 approval metadata（`user_id`、`user_id_alt`、thread metadata）与上游 `safe_schedule_threadsafe`、platform reconnect/circuit-breaker、session/gateway lifecycle 改动。
+
+#### 6.1.4 `run_agent.py`
+
+- 上游将 `AIAgent` 大量初始化、conversation loop、tool execution 逻辑拆分到 `agent/*` helper modules；私有分支仍有 Feishu/session-search/tool-observability 兼容字段和行为。
+- 解决策略：保留私有 `AIAgent` constructor/session-search/tool-observability 兼容行为，吸收上游模块拆分后的相关导入和辅助行为，避免 gateway 传入私有参数时失配。
+
+#### 6.1.5 `tools/cronjob_tools.py`
+
+- 冲突点在 cron job lookup/permission enforcement。
+- 解决策略：合并上游 name-based `resolve_job_ref` 行为与私有 gateway cron owner/ACL 检查，继续阻止普通 gateway 用户管理不属于自己的 job。
+
+#### 6.1.6 `tools/tts_tool.py`
+
+- 冲突点在 TTS provider docs/credential detection：上游新增 xAI OAuth 检测，私有分支有 MOSS-TTS-Nano provider。
+- 解决策略：保留 MOSS provider 文档和行为，合并上游 xAI OAuth credential 检测/说明。
+
+#### 6.1.7 本次验证
+
+- `python -m py_compile gateway/platforms/base.py gateway/run.py run_agent.py tools/cronjob_tools.py tools/tts_tool.py`
+- import smoke check：`gateway.platforms.base`、`gateway.run`、`run_agent`、`tools.cronjob_tools`、`tools.tts_tool`
+
+### 6.2 上游同步冲突解决记录（2026-05-14）
 
 合并 172 个 upstream commits，2 个文件存在冲突。以下为每处冲突的解决策略：
 
