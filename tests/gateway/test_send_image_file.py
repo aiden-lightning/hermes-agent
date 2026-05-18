@@ -57,6 +57,73 @@ class TestExtractMediaImages:
         assert "/audio.ogg" in paths
         assert "/screenshot.png" in paths
 
+    def test_media_in_fenced_code_is_not_extracted_or_stripped(self):
+        content = """Example:
+```python
+print("MEDIA:/tmp/example.png")
+```
+Done."""
+
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+
+        assert media == []
+        assert cleaned == content
+
+    def test_media_in_inline_code_is_not_extracted_or_stripped(self):
+        content = "Use `MEDIA:/tmp/example.png` as the directive format."
+
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+
+        assert media == []
+        assert cleaned == content
+
+    def test_media_regex_snippet_is_not_extracted_or_stripped(self):
+        content = r"""The parser uses this pattern:
+```python
+media_pattern = re.compile(r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|\S+)[`"']?''')
+```
+Inline regex `MEDIA:\s*(?P<path>\S+)` is explanatory."""
+
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+
+        assert media == []
+        assert cleaned == content
+
+    def test_normal_top_level_media_still_extracted(self):
+        content = "Here is file\nMEDIA:/tmp/real.png"
+
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+
+        assert media == [("/tmp/real.png", False)]
+        assert "MEDIA:" not in cleaned
+        assert "Here is file" in cleaned
+
+    def test_backticked_top_level_media_still_extracted(self):
+        content = "Here is file:\n`MEDIA:/tmp/real.png`"
+
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+
+        assert media == [("/tmp/real.png", False)]
+        assert "MEDIA:" not in cleaned
+        assert "Here is file:" in cleaned
+
+    def test_media_regex_snippet_cannot_consume_later_real_directive(self):
+        content = r'''The parser uses this pattern:
+```python
+media_pattern = re.compile(r''' + "'''" + r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|\S+)[`"']?''' + "'''" + r''')
+```
+Inline example MEDIA: `MEDIA:/path/to/audio.ogg` should remain visible.
+
+MEDIA:/tmp/real.png'''
+
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+
+        assert media == [("/tmp/real.png", False)]
+        assert "media_pattern = re.compile" in cleaned
+        assert r"MEDIA:\s*" in cleaned
+        assert "Inline example MEDIA: `MEDIA:/path/to/audio.ogg` should remain visible." in cleaned
+        assert "MEDIA:/tmp/real.png" not in cleaned
+
 
 # ---------------------------------------------------------------------------
 # Telegram send_image_file tests

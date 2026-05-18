@@ -84,6 +84,49 @@ class TestCleanForDisplay:
         # But "media:" is lowercase so won't match either
         assert result == text
 
+    def test_media_in_fenced_code_is_not_stripped(self):
+        """Code examples with MEDIA: remain visible in streaming previews."""
+        text = """Example:
+```python
+print("MEDIA:/tmp/example.png")
+```
+Done."""
+
+        assert GatewayStreamConsumer._clean_for_display(text) == text
+
+    def test_media_in_inline_code_is_not_stripped(self):
+        """Inline MEDIA: examples remain visible in streaming previews."""
+        text = "Use `MEDIA:/tmp/example.png` as the directive format."
+
+        assert GatewayStreamConsumer._clean_for_display(text) == text
+
+    def test_media_regex_snippet_is_not_stripped(self):
+        """Regex/source examples containing MEDIA: remain visible."""
+        text = r"""The parser uses this pattern:
+```python
+media_pattern = re.compile(r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|\S+)[`"']?''')
+```
+Inline regex `MEDIA:\s*(?P<path>\S+)` is explanatory."""
+
+        assert GatewayStreamConsumer._clean_for_display(text) == text
+
+    def test_media_regex_snippet_cannot_consume_later_real_directive(self):
+        """MEDIA: examples in code do not protect later real directives."""
+        text = r'''The parser uses this pattern:
+```python
+media_pattern = re.compile(r''' + "'''" + r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|\S+)[`"']?''' + "'''" + r''')
+```
+Inline example MEDIA: `MEDIA:/path/to/audio.ogg` should remain visible.
+
+MEDIA:/tmp/real.png'''
+
+        cleaned = GatewayStreamConsumer._clean_for_display(text)
+
+        assert "media_pattern = re.compile" in cleaned
+        assert r"MEDIA:\s*" in cleaned
+        assert "Inline example MEDIA: `MEDIA:/path/to/audio.ogg` should remain visible." in cleaned
+        assert "MEDIA:/tmp/real.png" not in cleaned
+
 
 # ── Integration: _send_or_edit strips MEDIA: ─────────────────────────────
 
@@ -1780,4 +1823,3 @@ class TestUtf16OverflowDetection:
         # auto-attr mock. Verified indirectly by all the other tests in
         # this file passing — they all use MagicMock adapters.
         assert consumer is not None
-

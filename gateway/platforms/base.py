@@ -109,6 +109,84 @@ def should_send_media_as_audio(platform, ext: str, is_voice: bool = False) -> bo
     return True
 
 
+def _markdown_code_spans(text: str) -> list[tuple[int, int]]:
+    """Return fenced and inline markdown code spans in *text*."""
+    spans: list[tuple[int, int]] = []
+    for match in re.finditer(r"```.*?```", text, re.DOTALL):
+        spans.append((match.start(), match.end()))
+    for match in re.finditer(r"`[^`\n]+`", text):
+        if any(start <= match.start() < end for start, end in spans):
+            continue
+        if _is_backticked_media_directive(text, match.start(), match.end()):
+            continue
+        spans.append((match.start(), match.end()))
+    return spans
+
+
+def _is_backticked_media_directive(text: str, start: int, end: int) -> bool:
+    body = text[start + 1:end - 1].strip()
+    if not re.fullmatch(r"MEDIA:\s*(?:~/|/)[^`\n]+", body):
+        return False
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+    prefix = text[line_start:start].strip()
+    suffix = text[end:line_end].strip()
+    if suffix and not re.fullmatch(r'''[`"'\])}.,;:!?]*''', suffix):
+        return False
+    return not prefix or prefix.endswith((":", "-"))
+
+
+def _in_markdown_code(pos: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start <= pos < end for start, end in spans)
+
+
+def _non_markdown_code_spans(text: str, code_spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Return spans in *text* that are outside markdown code."""
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for start, end in sorted(code_spans):
+        if start > cursor:
+            spans.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < len(text):
+        spans.append((cursor, len(text)))
+    return spans
+
+
+def _remove_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    cleaned = text
+    for start, end in sorted(spans, reverse=True):
+        cleaned = cleaned[:start] + cleaned[end:]
+    return cleaned
+
+
+def _strip_media_directives_for_display(text: str) -> str:
+    """Remove MEDIA directives outside markdown code spans."""
+    if "MEDIA:" not in text:
+        return text
+    media_pattern = re.compile(
+        r'''[`"']?MEDIA:\s*(?:`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:png|jpe?g|gif|webp|mp4|mov|avi|mkv|webm|ogg|opus|mp3|wav|m4a|flac|epub|pdf|zip|rar|7z|docx?|xlsx?|pptx?|txt|csv|apk|ipa)(?=[\s`"',;:)\]}]|$)|\S+)[`"']?'''
+    )
+    backticked_path_pattern = re.compile(r'''[`"']?MEDIA:\s*`(?:~/|/)[^`\n]+`[`"']?''')
+    code_spans = _markdown_code_spans(text)
+    media_spans: list[tuple[int, int]] = []
+    for segment_start, segment_end in _non_markdown_code_spans(text, code_spans):
+        segment = text[segment_start:segment_end]
+        media_spans.extend(
+            (segment_start + match.start(), segment_start + match.end())
+            for match in media_pattern.finditer(segment)
+        )
+    for match in backticked_path_pattern.finditer(text):
+        if _in_markdown_code(match.start(), code_spans):
+            continue
+        if any(start < match.end() and match.start() < end for start, end in media_spans):
+            continue
+        media_spans.append((match.start(), match.end()))
+    return _remove_spans(text, media_spans)
+
+
 def utf16_len(s: str) -> int:
     """Count UTF-16 code units in *s*.
 
@@ -2146,17 +2224,39 @@ class BasePlatformAdapter(ABC):
         media_pattern = re.compile(
             r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:png|jpe?g|gif|webp|mp4|mov|avi|mkv|webm|ogg|opus|mp3|wav|m4a|flac|epub|pdf|zip|rar|7z|docx?|xlsx?|pptx?|txt|csv|apk|ipa)(?=[\s`"',;:)\]}]|$)|\S+)[`"']?'''
         )
-        for match in media_pattern.finditer(content):
-            path = match.group("path").strip()
-            if len(path) >= 2 and path[0] == path[-1] and path[0] in "`\"'":
-                path = path[1:-1].strip()
-            path = path.lstrip("`\"'").rstrip("`\"',.;:)}]")
+        code_spans = _markdown_code_spans(cleaned)
+        media_spans = []
+        for segment_start, segment_end in _non_markdown_code_spans(cleaned, code_spans):
+            segment = cleaned[segment_start:segment_end]
+            for match in media_pattern.finditer(segment):
+                path = match.group("path").strip()
+                if len(path) >= 2 and path[0] == path[-1] and path[0] in "`\"'":
+                    path = path[1:-1].strip()
+                path = path.lstrip("`\"'").rstrip("`\"',.;:)}]")
+                if path:
+                    media.append((os.path.expanduser(path), has_voice_tag))
+                    media_spans.append((segment_start + match.start(), segment_start + match.end()))
+
+        # Preserve supported LLM formatting like ``MEDIA: `/tmp/file.png```,
+        # while keeping explanatory inline examples such as
+        # ``MEDIA: `MEDIA:/tmp/file.png``` visible.
+        backticked_path_pattern = re.compile(r'''[`"']?MEDIA:\s*`(?P<path>(?:~/|/)[^`\n]+)`[`"']?''')
+        for match in backticked_path_pattern.finditer(cleaned):
+            if _in_markdown_code(match.start(), code_spans):
+                continue
+            if any(start < match.end() and match.start() < end for start, end in media_spans):
+                continue
+            path = match.group("path").strip().rstrip("`\"',.;:)}]")
             if path:
                 media.append((os.path.expanduser(path), has_voice_tag))
+                media_spans.append((match.start(), match.end()))
 
         # Remove MEDIA tags from content (including surrounding quote/backtick wrappers)
         if media:
-            cleaned = media_pattern.sub('', cleaned)
+            ordered_media = sorted(zip(media_spans, media), key=lambda item: item[0][0])
+            media_spans = [span for span, _ in ordered_media]
+            media = [item for _, item in ordered_media]
+            cleaned = _remove_spans(cleaned, media_spans)
             cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
         return media, cleaned
@@ -3171,7 +3271,7 @@ class BasePlatformAdapter(ABC):
                 # Strip any remaining internal directives from message body (fixes #1561)
                 text_content = text_content.replace("[[audio_as_voice]]", "").strip()
                 text_content = text_content.replace("[[as_document]]", "").strip()
-                text_content = re.sub(r"MEDIA:\s*\S+", "", text_content).strip()
+                text_content = _strip_media_directives_for_display(text_content).strip()
                 if images:
                     logger.info("[%s] extract_images found %d image(s) in response (%d chars)", self.name, len(images), len(response))
 

@@ -13,6 +13,7 @@ from gateway.platforms.base import (
     safe_url_for_log,
     utf16_len,
     _prefix_within_utf16_limit,
+    _strip_media_directives_for_display,
 )
 
 
@@ -307,14 +308,29 @@ class TestExtractMedia:
         assert cleaned == ""
 
     def test_media_tag_strips_wrapping_quotes_and_backticks(self):
-        content = "MEDIA: `/path/to/file.png`\nMEDIA:\"/path/to/file2.png\"\nMEDIA:'/path/to/file3.png'"
+        content = "MEDIA: `/path/to/file.png`\nMEDIA:\"/path/to/file2.png\"\nMEDIA:'/path/to/file3.png'\n`MEDIA:/path/to/file4.png`"
         media, cleaned = BasePlatformAdapter.extract_media(content)
         assert media == [
             ("/path/to/file.png", False),
             ("/path/to/file2.png", False),
             ("/path/to/file3.png", False),
+            ("/path/to/file4.png", False),
         ]
         assert cleaned == ""
+
+    def test_display_media_cleanup_preserves_code_examples(self):
+        content = """Example:
+```python
+print("MEDIA:/tmp/example.png")
+```
+Done.
+
+MEDIA:/tmp/real.png"""
+
+        cleaned = _strip_media_directives_for_display(content)
+
+        assert "print(\"MEDIA:/tmp/example.png\")" in cleaned
+        assert "MEDIA:/tmp/real.png" not in cleaned
 
     def test_media_tag_supports_quoted_paths_with_spaces(self):
         content = "Here\nMEDIA: '/tmp/my image.png'\nAfter"
@@ -728,4 +744,3 @@ class TestProxyKwargsForAiohttp:
             sess_kw, req_kw = proxy_kwargs_for_aiohttp("http://proxy:8080")
             assert sess_kw == {}
             assert req_kw == {"proxy": "http://proxy:8080"}
-

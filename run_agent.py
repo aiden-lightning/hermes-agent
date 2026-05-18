@@ -3995,6 +3995,13 @@ class AIAgent:
         return self.api_mode != "codex_responses"
 
     def _compress_context(self, messages: list, system_message: str, *, approx_tokens: int = None, task_id: str = "default", focus_topic: str = None) -> tuple:
+        _pre_msg_count = len(messages)
+        logger.info(
+            "context compression started: session=%s messages=%d tokens=~%s model=%s focus=%r",
+            self.session_id or "none", _pre_msg_count,
+            f"{approx_tokens:,}" if approx_tokens else "unknown", self.model,
+            focus_topic,
+        )
         self._emit_status(
             "🗜️ Compacting context — summarizing earlier conversation so I can continue..."
         )

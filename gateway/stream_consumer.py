@@ -25,6 +25,7 @@ from typing import Any, Callable, Optional
 
 from gateway.platforms.base import BasePlatformAdapter as _BasePlatformAdapter
 from gateway.platforms.base import _custom_unit_to_cp
+from gateway.platforms.base import _strip_media_directives_for_display
 from gateway.config import (
     DEFAULT_STREAMING_EDIT_INTERVAL as _DEFAULT_STREAMING_EDIT_INTERVAL,
     DEFAULT_STREAMING_BUFFER_THRESHOLD as _DEFAULT_STREAMING_BUFFER_THRESHOLD,
@@ -609,11 +610,6 @@ class GatewayStreamConsumer:
         except Exception as e:
             logger.error("Stream consumer error: %s", e)
 
-    # Pattern to strip MEDIA:<path> tags (including optional surrounding quotes).
-    # Matches the simple cleanup regex used by the non-streaming path in
-    # gateway/platforms/base.py for post-processing.
-    _MEDIA_RE = re.compile(r'''[`"']?MEDIA:\s*\S+[`"']?''')
-
     @staticmethod
     def _clean_for_display(text: str) -> str:
         """Strip MEDIA: directives and internal markers from text before display.
@@ -628,7 +624,7 @@ class GatewayStreamConsumer:
         if "MEDIA:" not in text and "[[audio_as_voice]]" not in text:
             return text
         cleaned = text.replace("[[audio_as_voice]]", "")
-        cleaned = GatewayStreamConsumer._MEDIA_RE.sub("", cleaned)
+        cleaned = _strip_media_directives_for_display(cleaned)
         # Collapse excessive blank lines left behind by removed tags
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         # Strip trailing whitespace/newlines but preserve leading content
