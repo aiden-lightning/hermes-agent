@@ -118,12 +118,17 @@ def init_agent(
     prefill_messages: List[Dict[str, Any]] = None,
     platform: str = None,
     user_id: str = None,
+    user_id_alt: str = None,
+    session_owner_user_id: str = None,
     user_name: str = None,
     chat_id: str = None,
     chat_name: str = None,
     chat_type: str = None,
     thread_id: str = None,
     gateway_session_key: str = None,
+    session_search_source_filter: List[str] = None,
+    session_search_user_id_filter: List[str] = None,
+    session_search_include_unowned_user_sessions: bool = False,
     skip_context_files: bool = False,
     load_soul_identity: bool = False,
     skip_memory: bool = False,
@@ -200,12 +205,17 @@ def init_agent(
     agent.ephemeral_system_prompt = ephemeral_system_prompt
     agent.platform = platform  # "cli", "telegram", "discord", "whatsapp", etc.
     agent._user_id = user_id  # Platform user identifier (gateway sessions)
+    agent._user_id_alt = user_id_alt
+    agent._session_owner_user_id = session_owner_user_id or user_id_alt or user_id
     agent._user_name = user_name
     agent._chat_id = chat_id
     agent._chat_name = chat_name
     agent._chat_type = chat_type
     agent._thread_id = thread_id
     agent._gateway_session_key = gateway_session_key  # Stable per-chat key (e.g. agent:main:telegram:dm:123)
+    agent._session_search_source_filter = list(session_search_source_filter or []) or None
+    agent._session_search_user_id_filter = list(session_search_user_id_filter or []) if session_search_user_id_filter is not None else None
+    agent._session_search_include_unowned_user_sessions = bool(session_search_include_unowned_user_sessions)
     # Pluggable print function — CLI replaces this with _cprint so that
     # raw ANSI status lines are routed through prompt_toolkit's renderer
     # instead of going directly to stdout where patch_stdout's StdoutProxy
@@ -986,6 +996,8 @@ def init_agent(
                     # Thread gateway user identity for per-user memory scoping
                     if agent._user_id:
                         _init_kwargs["user_id"] = agent._user_id
+                    if agent._user_id_alt:
+                        _init_kwargs["user_id_alt"] = agent._user_id_alt
                     if agent._user_name:
                         _init_kwargs["user_name"] = agent._user_name
                     if agent._chat_id:
