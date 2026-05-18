@@ -674,14 +674,8 @@ _AGENT_PENDING_SENTINEL = object()
 
 
 def _is_no_reply_sentinel_response(event: MessageEvent, response: str) -> bool:
-    """Return True when a scoped synthetic event intentionally suppresses delivery."""
-    metadata = getattr(event, "metadata", None) or {}
-    return (
-        isinstance(metadata, dict)
-        and metadata.get("no_reply_sentinel") == NO_REPLY_SENTINEL
-        and metadata.get("feishu_event_kind") == "reaction"
-        and response.strip() == NO_REPLY_SENTINEL
-    )
+    """Return True when the assistant's final response is the no-reply sentinel."""
+    return isinstance(response, str) and response.strip() == NO_REPLY_SENTINEL
 
 
 def _is_no_reply_sentinel_message(message: dict) -> bool:
@@ -696,12 +690,6 @@ def _is_no_reply_sentinel_message(message: dict) -> bool:
 
 def _filter_no_reply_sentinel_messages(messages: list[dict]) -> list[dict]:
     return [msg for msg in messages if not _is_no_reply_sentinel_message(msg)]
-
-
-def _drop_trailing_no_reply_sentinel_message(messages: list[dict]) -> list[dict]:
-    if messages and _is_no_reply_sentinel_message(messages[-1]):
-        return messages[:-1]
-    return messages
 
 
 def _resolve_runtime_agent_kwargs() -> dict:
@@ -7852,6 +7840,7 @@ class GatewayRunner:
 
         # Load conversation history from transcript
         history = self.session_store.load_transcript(session_entry.session_id)
+        history = _filter_no_reply_sentinel_messages(history)
         
         # -----------------------------------------------------------------
         # Session hygiene: auto-compress pathologically large transcripts
@@ -8175,6 +8164,7 @@ class GatewayRunner:
         
         # One-time prompt if no home channel is set for this platform
         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
+        _pending_platform_notice = None
         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
@@ -8194,7 +8184,7 @@ class GatewayRunner:
                     f"Type {sethome_cmd} to make this chat your home channel, "
                     f"or ignore to skip."
                 )
-                await self._deliver_platform_notice(source, notice)
+                _pending_platform_notice = notice
         
         # -----------------------------------------------------------------
         # Voice channel awareness — inject current voice channel state
@@ -8302,7 +8292,7 @@ class GatewayRunner:
             suppress_no_reply_delivery = _is_no_reply_sentinel_response(event, response)
             if suppress_no_reply_delivery:
                 logger.info(
-                    "Suppressing no-reply sentinel delivery for scoped Feishu reaction event in session %s",
+                    "Suppressing no-reply sentinel delivery in session %s",
                     session_key,
                 )
 
@@ -8366,7 +8356,7 @@ class GatewayRunner:
             if suppress_no_reply_delivery and self._session_db is not None:
                 try:
                     db_messages = self._session_db.get_messages_as_conversation(session_entry.session_id)
-                    filtered_db_messages = _drop_trailing_no_reply_sentinel_message(db_messages)
+                    filtered_db_messages = _filter_no_reply_sentinel_messages(db_messages)
                     if len(filtered_db_messages) != len(db_messages):
                         self._session_db.replace_messages(session_entry.session_id, filtered_db_messages)
                 except Exception as _e:
@@ -8579,8 +8569,7 @@ class GatewayRunner:
                     # to prevent the duplicate-write bug (#860).  We still write
                     # to JSONL for backward compatibility and as a backup.
                     agent_persisted = self._session_db is not None
-                    if suppress_no_reply_delivery:
-                        new_messages = _filter_no_reply_sentinel_messages(new_messages)
+                    new_messages = _filter_no_reply_sentinel_messages(new_messages)
                     for msg in new_messages:
                         # Skip system messages (they're rebuilt each run)
                         if msg.get("role") == "system":
@@ -8602,6 +8591,9 @@ class GatewayRunner:
 
             if suppress_no_reply_delivery:
                 return None
+
+            if _pending_platform_notice:
+                await self._deliver_platform_notice(source, _pending_platform_notice)
 
             # Auto voice reply: send TTS audio before the text response
             _already_sent = bool(agent_result.get("already_sent"))

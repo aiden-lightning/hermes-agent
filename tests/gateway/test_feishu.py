@@ -1902,6 +1902,35 @@ class TestAdapterBehavior(unittest.TestCase):
             "1. Hermes: deploy is done",
         )
 
+    def test_group_history_skips_exact_no_reply_sentinel_bot_response(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.base import NO_REPLY_SENTINEL
+        from gateway.platforms.feishu import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig(extra={"group_history_inject_count": 3}))
+        adapter._bot_name = "Hermes"
+        adapter._cache_outbound_group_message(
+            chat_id="oc_group",
+            text=f"  {NO_REPLY_SENTINEL}\n",
+            message_id="om_sentinel",
+        )
+        adapter._cache_outbound_group_message(
+            chat_id="oc_group",
+            text="real answer",
+            message_id="om_real",
+        )
+
+        context = adapter._build_group_history_context(
+            chat_id="oc_group",
+            before_message_id="om_next_question",
+        )
+
+        self.assertEqual(
+            context,
+            "[Previous group messages]\n"
+            "1. Hermes: real answer",
+        )
+
     def test_streaming_final_edit_updates_bot_history_entry(self):
         from gateway.config import PlatformConfig
         from gateway.platforms.feishu import FeishuAdapter

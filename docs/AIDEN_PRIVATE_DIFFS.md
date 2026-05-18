@@ -101,7 +101,7 @@
 
 7. **Feishu reaction 行为**
    - 只对 Hermes 自己发送并记录过的消息路由 reaction，避免对同一 Feishu app 发出的无关卡片误触发。
-   - 引入 scoped no-reply sentinel，用于 reaction 经 agent 判断后不必回复时抑制可见发送。
+   - 引入 no-reply sentinel：reaction 或普通 turn 经 agent 判断返回精确 sentinel 时抑制可见发送，并过滤 transcript / Feishu group history 中的 sentinel，避免污染后续上下文。
    - 相关 commit：
      - `8baaaf97b fix(feishu): restrict reaction routing to sent messages`
      - `2b7472e3d fix(feishu): suppress no-op reaction replies`

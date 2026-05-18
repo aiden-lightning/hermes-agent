@@ -3027,7 +3027,7 @@ class FeishuAdapter(BasePlatformAdapter):
         message_id: Optional[str] = None,
     ) -> None:
         rendered = (text or "").strip()
-        if not rendered:
+        if not rendered or rendered == NO_REPLY_SENTINEL:
             return
         self._append_group_message_history(
             FeishuGroupMessageCacheEntry(
@@ -3052,7 +3052,12 @@ class FeishuAdapter(BasePlatformAdapter):
         history = getattr(self, "_group_message_history", {}).get(chat_id)
         if not history:
             return ""
-        prior = [entry for entry in history if entry.message_id != before_message_id]
+        prior = [
+            entry
+            for entry in history
+            if entry.message_id != before_message_id
+            and (entry.text or "").strip() != NO_REPLY_SENTINEL
+        ]
         if not prior:
             return ""
         if self._group_history_inject_count <= 0:

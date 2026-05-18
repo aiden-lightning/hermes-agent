@@ -9,7 +9,14 @@ from gateway.run import GatewayRunner
 from gateway.session import SessionSource, SessionStore
 
 
-def _runner_for_no_reply(tmp_path, monkeypatch, final_response, *, persist_to_db=False):
+def _runner_for_no_reply(
+    tmp_path,
+    monkeypatch,
+    final_response,
+    *,
+    persist_to_db=False,
+    user_text="Feishu quick reaction",
+):
     monkeypatch.setattr(
         "gateway.run._load_gateway_config",
         lambda: {"compression": {"enabled": False}},
@@ -48,12 +55,12 @@ def _runner_for_no_reply(tmp_path, monkeypatch, final_response, *, persist_to_db
     async def _run_agent(**kwargs):
         if persist_to_db and runner._session_db is not None:
             runner._session_db.create_session(kwargs["session_id"], "feishu")
-            runner._session_db.append_message(kwargs["session_id"], "user", "Feishu quick reaction")
+            runner._session_db.append_message(kwargs["session_id"], "user", user_text)
             runner._session_db.append_message(kwargs["session_id"], "assistant", final_response)
         return {
             "final_response": final_response,
             "messages": [
-                {"role": "user", "content": "Feishu quick reaction"},
+                {"role": "user", "content": user_text},
                 {"role": "assistant", "content": final_response},
             ],
             "history_offset": 0,
@@ -93,12 +100,13 @@ async def test_reaction_no_reply_sentinel_returns_none_and_does_not_send(tmp_pat
     result = await runner._handle_message_with_agent(event, event.source, session_key, run_generation=1)
 
     assert result is None
-    runner.adapters[Platform.FEISHU].send.assert_not_awaited()
+    assert runner.adapters[Platform.FEISHU].send.await_args_list == []
     runner.hooks.emit.assert_any_await(
         "agent:end",
         {
             "platform": "feishu",
             "user_id": "ou_user",
+            "chat_id": "oc_chat",
             "session_id": runner.session_store.get_or_create_session(event.source).session_id,
             "message": "Feishu quick reaction",
             "response": "",
@@ -127,7 +135,7 @@ async def test_reaction_normal_response_still_returns_for_delivery(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_ordinary_message_sentinel_is_not_scoped_to_suppress(tmp_path, monkeypatch):
+async def test_ordinary_message_no_reply_sentinel_returns_none_and_does_not_send(tmp_path, monkeypatch):
     runner = _runner_for_no_reply(tmp_path, monkeypatch, NO_REPLY_SENTINEL)
     event = _reaction_event()
     event.metadata = {}
@@ -135,13 +143,52 @@ async def test_ordinary_message_sentinel_is_not_scoped_to_suppress(tmp_path, mon
 
     result = await runner._handle_message_with_agent(event, event.source, session_key, run_generation=1)
 
-    assert result == NO_REPLY_SENTINEL
+    assert result is None
+    assert runner.adapters[Platform.FEISHU].send.await_args_list == []
+
+
+@pytest.mark.asyncio
+async def test_user_text_containing_no_reply_sentinel_still_processes_and_sends(tmp_path, monkeypatch):
+    user_text = f"{NO_REPLY_SENTINEL} 的输入没有被跳过"
+    runner = _runner_for_no_reply(
+        tmp_path,
+        monkeypatch,
+        "normal response",
+        user_text=user_text,
+    )
+    event = _reaction_event()
+    event.text = user_text
+    event.metadata = {}
+    session_key = runner.session_store.get_or_create_session(event.source).session_key
+
+    result = await runner._handle_message_with_agent(event, event.source, session_key, run_generation=1)
+
+    assert result == "normal response"
+    runner._run_agent.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_reaction_no_reply_sentinel_is_removed_from_session_db(tmp_path, monkeypatch):
     runner = _runner_for_no_reply(tmp_path, monkeypatch, NO_REPLY_SENTINEL, persist_to_db=True)
     event = _reaction_event()
+    session = runner.session_store.get_or_create_session(event.source)
+
+    result = await runner._handle_message_with_agent(event, event.source, session.session_key, run_generation=1)
+
+    assert result is None
+    db_messages = runner._session_db.get_messages_as_conversation(session.session_id)
+    assert any(msg.get("role") == "user" and msg.get("content") == "Feishu quick reaction" for msg in db_messages)
+    assert all(
+        not (msg.get("role") == "assistant" and msg.get("content", "").strip() == NO_REPLY_SENTINEL)
+        for msg in db_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_ordinary_message_no_reply_sentinel_is_removed_from_session_db(tmp_path, monkeypatch):
+    runner = _runner_for_no_reply(tmp_path, monkeypatch, NO_REPLY_SENTINEL, persist_to_db=True)
+    event = _reaction_event()
+    event.metadata = {}
     session = runner.session_store.get_or_create_session(event.source)
 
     result = await runner._handle_message_with_agent(event, event.source, session.session_key, run_generation=1)
