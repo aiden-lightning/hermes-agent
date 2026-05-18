@@ -544,6 +544,34 @@ class TestDeliverResultWrapping:
         # Media files should be forwarded separately
         assert kwargs["media_files"] == [("/tmp/test-voice.ogg", False)]
 
+    def test_delivery_blocks_sensitive_media_tags_before_send(self, tmp_path, monkeypatch):
+        """Cron delivery should not forward MEDIA files outside the outbound allowlist."""
+        from gateway.config import Platform
+
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        secret = hermes_home / ".env"
+        secret.write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        pconfig = MagicMock()
+        pconfig.enabled = True
+        mock_cfg = MagicMock()
+        mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
+
+        with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}):
+            job = {
+                "id": "secret-job",
+                "deliver": "origin",
+                "origin": {"platform": "telegram", "chat_id": "123"},
+            }
+            _deliver_result(job, f"Secret\nMEDIA:{secret}")
+
+        send_mock.assert_called_once()
+        assert send_mock.call_args.kwargs["media_files"] == []
+
     def test_live_adapter_sends_media_as_attachments(self):
         """When a live adapter is available, MEDIA files should be sent as native
         platform attachments (e.g., Discord voice, Telegram audio) rather than

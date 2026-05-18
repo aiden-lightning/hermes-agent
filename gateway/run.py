@@ -11031,6 +11031,12 @@ class GatewayRunner:
             media_files, _ = adapter.extract_media(response)
             _, cleaned = adapter.extract_images(response)
             local_files, _ = adapter.extract_local_files(cleaned)
+            from gateway.platforms.base import (
+                filter_outbound_media_files,
+                filter_outbound_media_paths,
+            )
+            media_files = filter_outbound_media_files(media_files, getattr(adapter, "name", "gateway"))
+            local_files = filter_outbound_media_paths(local_files, getattr(adapter, "name", "gateway"))
 
             _thread_meta = self._thread_metadata_for_source(event.source, self._reply_anchor_for_event(event))
 
@@ -11343,6 +11349,8 @@ class GatewayRunner:
             # Extract media files from the response
             if response:
                 media_files, response = adapter.extract_media(response)
+                from gateway.platforms.base import filter_outbound_media_files
+                media_files = filter_outbound_media_files(media_files, getattr(adapter, "name", "gateway"))
                 images, text_content = adapter.extract_images(response)
 
                 preview = prompt[:60] + ("..." if len(prompt) > 60 else "")

@@ -1477,6 +1477,18 @@ DEFAULT_CONFIG = {
         "max_parallel_jobs": None,
     },
 
+    "gateway": {
+        # Local paths that outbound MEDIA: directives and auto-detected local
+        # file attachments may upload to messaging platforms. Paths support
+        # ~ and env vars; ~/.hermes resolves to the active Hermes profile home.
+        "outbound_media_allowlist": [
+            "/tmp/",
+            "~/.hermes/audio_cache/",
+            "~/.hermes/image_cache/",
+            "~/.hermes/generated/",
+        ],
+    },
+
     # Kanban multi-agent coordination — controls the dispatcher loop that
     # spawns workers for ready tasks. The dispatcher ticks every N seconds
     # (default 60), reclaims stale claims, promotes dependency-satisfied

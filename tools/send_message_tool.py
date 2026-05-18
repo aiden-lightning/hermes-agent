@@ -533,7 +533,11 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     (preserves code-block boundaries, adds part indicators).
     """
     from gateway.config import Platform
-    from gateway.platforms.base import BasePlatformAdapter, utf16_len
+    from gateway.platforms.base import (
+        BasePlatformAdapter,
+        filter_outbound_media_files,
+        utf16_len,
+    )
     from gateway.platforms.discord import DiscordAdapter
     from gateway.platforms.slack import SlackAdapter
 
@@ -551,7 +555,7 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     except ImportError:
         _feishu_available = False
 
-    media_files = media_files or []
+    media_files = filter_outbound_media_files(media_files or [], "send_message")
 
     if platform == Platform.SLACK and message:
         try:

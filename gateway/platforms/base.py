@@ -17,6 +17,7 @@ import subprocess
 import sys
 import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from utils import normalize_proxy_url
@@ -107,6 +108,121 @@ def should_send_media_as_audio(platform, ext: str, is_voice: bool = False) -> bo
             return is_voice
         return normalized_ext in _TELEGRAM_AUDIO_ATTACHMENT_EXTS
     return True
+
+
+DEFAULT_OUTBOUND_MEDIA_ALLOWLIST = (
+    "/tmp/",
+    "~/.hermes/audio_cache/",
+    "~/.hermes/image_cache/",
+    "~/.hermes/generated/",
+)
+
+
+def _expand_outbound_media_allowlist_path(path: str) -> Path:
+    raw = os.path.expandvars(str(path or "").strip())
+    hermes_prefix = "~/.hermes"
+    if raw == hermes_prefix or raw.startswith(hermes_prefix + "/"):
+        suffix = raw[len(hermes_prefix):].lstrip("/")
+        expanded = get_hermes_home() / suffix if suffix else get_hermes_home()
+    else:
+        expanded = Path(raw).expanduser()
+    return expanded.resolve(strict=False)
+
+
+def get_outbound_media_allowlist() -> list[Path]:
+    """Return resolved directories allowed for outbound local attachments."""
+    configured = None
+    try:
+        from hermes_cli.config import load_config as _load_config
+        cfg = _load_config()
+        gateway_cfg = cfg.get("gateway", {}) if isinstance(cfg, dict) else {}
+        if isinstance(gateway_cfg, dict):
+            configured = gateway_cfg.get("outbound_media_allowlist")
+    except Exception:
+        configured = None
+
+    env_override = os.getenv("HERMES_OUTBOUND_MEDIA_ALLOWLIST", "").strip()
+    if env_override:
+        configured = [
+            p for p in re.split(r"[," + re.escape(os.pathsep) + r"]", env_override)
+            if p.strip()
+        ]
+
+    if isinstance(configured, str):
+        raw_paths = [configured]
+    elif isinstance(configured, (list, tuple)):
+        raw_paths = [str(p) for p in configured]
+    else:
+        raw_paths = list(DEFAULT_OUTBOUND_MEDIA_ALLOWLIST)
+
+    allowlist: list[Path] = []
+    for raw_path in raw_paths:
+        try:
+            resolved = _expand_outbound_media_allowlist_path(raw_path)
+        except Exception:
+            continue
+        if resolved not in allowlist:
+            allowlist.append(resolved)
+    return allowlist
+
+
+def is_outbound_media_path_allowed(path: str, allowlist: list[Path] | None = None) -> bool:
+    """Return True when *path* resolves inside an outbound media directory."""
+    if not path:
+        return False
+    try:
+        candidate = Path(os.path.expandvars(str(path))).expanduser().resolve(strict=False)
+    except Exception:
+        return False
+    for allowed_dir in allowlist if allowlist is not None else get_outbound_media_allowlist():
+        try:
+            candidate.relative_to(allowed_dir)
+            return candidate != allowed_dir
+        except ValueError:
+            continue
+    return False
+
+
+def _safe_media_path_for_log(path: str) -> str:
+    try:
+        return Path(path).name or "<unnamed>"
+    except Exception:
+        return "<invalid>"
+
+
+def filter_outbound_media_paths(paths: list[str], adapter_name: str = "gateway") -> list[str]:
+    """Drop local attachment paths outside the configured outbound allowlist."""
+    allowlist = get_outbound_media_allowlist()
+    allowed: list[str] = []
+    for path in paths or []:
+        if is_outbound_media_path_allowed(path, allowlist):
+            allowed.append(path)
+        else:
+            logger.warning(
+                "[%s] Blocked outbound local media path outside allowlist: %s",
+                adapter_name,
+                _safe_media_path_for_log(path),
+            )
+    return allowed
+
+
+def filter_outbound_media_files(
+    media_files: list[tuple[str, bool]],
+    adapter_name: str = "gateway",
+) -> list[tuple[str, bool]]:
+    """Drop MEDIA:<path> attachments outside the configured outbound allowlist."""
+    allowlist = get_outbound_media_allowlist()
+    allowed: list[tuple[str, bool]] = []
+    for media_path, is_voice in media_files or []:
+        if is_outbound_media_path_allowed(media_path, allowlist):
+            allowed.append((media_path, is_voice))
+        else:
+            logger.warning(
+                "[%s] Blocked outbound MEDIA path outside allowlist: %s",
+                adapter_name,
+                _safe_media_path_for_log(media_path),
+            )
+    return allowed
 
 
 def _markdown_code_spans(text: str) -> list[tuple[int, int]]:
@@ -539,7 +655,6 @@ def is_host_excluded_by_no_proxy(hostname: str, no_proxy_value: str | None = Non
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Awaitable, Tuple, Union
 from enum import Enum
 
@@ -548,7 +663,7 @@ sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 
 from gateway.config import Platform, PlatformConfig
 from gateway.session import SessionSource, build_session_key
-from hermes_constants import get_hermes_dir
+from hermes_constants import get_hermes_dir, get_hermes_home
 
 
 GATEWAY_SECRET_CAPTURE_UNSUPPORTED_MESSAGE = (
@@ -3280,6 +3395,9 @@ class BasePlatformAdapter(ABC):
                 local_files, text_content = self.extract_local_files(text_content)
                 if local_files:
                     logger.info("[%s] extract_local_files found %d file(s) in response", self.name, len(local_files))
+
+                media_files = filter_outbound_media_files(media_files, self.name)
+                local_files = filter_outbound_media_paths(local_files, self.name)
 
                 # Auto-TTS: if voice message, generate audio FIRST (before sending text)
                 # Gated via ``_should_auto_tts_for_chat``: fires when the chat has

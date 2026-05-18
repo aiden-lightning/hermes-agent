@@ -579,9 +579,10 @@ class TestSendToPlatformChunking:
         assert all(call == [] for call in sent_calls[:-1])
         assert sent_calls[-1] == media
 
-    def test_matrix_media_uses_native_adapter_helper(self, tmp_path):
+    def test_matrix_media_uses_native_adapter_helper(self, tmp_path, monkeypatch):
         doc_path = tmp_path / "test-send-message-matrix.pdf"
         doc_path.write_bytes(b"%PDF-1.4 test")
+        monkeypatch.setenv("HERMES_OUTBOUND_MEDIA_ALLOWLIST", str(tmp_path))
 
         try:
             helper = AsyncMock(return_value={"success": True, "platform": "matrix", "chat_id": "!room:example.com", "message_id": "$evt"})
@@ -1332,14 +1333,14 @@ class TestSendToPlatformDiscordMedia:
                     SimpleNamespace(enabled=True, token="tok", extra={}),
                     "999",
                     long_msg,
-                    media_files=[("/fake/img.png", False)],
+                        media_files=[("/tmp/img.png", False)],
                 )
             )
 
         assert result["success"] is True
         assert len(call_log) == 2  # Message was chunked
         assert call_log[0]["media_files"] == []  # First chunk: no media
-        assert call_log[1]["media_files"] == [("/fake/img.png", False)]  # Last chunk: media attached
+        assert call_log[1]["media_files"] == [("/tmp/img.png", False)]  # Last chunk: media attached
 
     def test_single_chunk_gets_media(self):
         """Short message (single chunk) gets media_files directly."""
@@ -1352,14 +1353,14 @@ class TestSendToPlatformDiscordMedia:
                     SimpleNamespace(enabled=True, token="tok", extra={}),
                     "888",
                     "short message",
-                    media_files=[("/fake/img.png", False)],
+                        media_files=[("/tmp/img.png", False)],
                 )
             )
 
         assert result["success"] is True
         send_mock.assert_awaited_once()
         call_kwargs = send_mock.await_args.kwargs
-        assert call_kwargs["media_files"] == [("/fake/img.png", False)]
+        assert call_kwargs["media_files"] == [("/tmp/img.png", False)]
 
 
 class TestSendMatrixUrlEncoding:

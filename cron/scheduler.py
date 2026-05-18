@@ -449,7 +449,12 @@ def _send_media_via_adapter(
     """
     from pathlib import Path
 
-    from gateway.platforms.base import should_send_media_as_audio
+    from gateway.platforms.base import (
+        filter_outbound_media_files,
+        should_send_media_as_audio,
+    )
+
+    media_files = filter_outbound_media_files(media_files, getattr(adapter, "name", "cron"))
 
     for media_path, _is_voice in media_files:
         try:
@@ -532,8 +537,9 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
         delivery_content = content
 
     # Extract MEDIA: tags so attachments are forwarded as files, not raw text
-    from gateway.platforms.base import BasePlatformAdapter
+    from gateway.platforms.base import BasePlatformAdapter, filter_outbound_media_files
     media_files, cleaned_delivery_content = BasePlatformAdapter.extract_media(delivery_content)
+    media_files = filter_outbound_media_files(media_files, "cron")
 
     try:
         config = load_gateway_config()
