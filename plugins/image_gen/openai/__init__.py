@@ -208,6 +208,12 @@ def _resolve_api_config() -> Tuple[Optional[str], Optional[str]]:
     base_url_lower = base_url.lower() if isinstance(base_url, str) else ""
 
     if api_key is None:
+        config_key_env = openai_cfg.get("key_env")
+        key_env = config_key_env.strip() if isinstance(config_key_env, str) else ""
+        if key_env:
+            api_key = os.environ.get(key_env) or None
+
+    if api_key is None:
         if "openrouter" in base_url_lower:
             api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
         else:

@@ -122,6 +122,29 @@ class TestAvailability:
 
         assert openai_plugin.OpenAIImageGenProvider().is_available() is True
 
+    def test_config_key_env_uses_named_environment_variable(self, monkeypatch, tmp_path):
+        import yaml
+
+        monkeypatch.setenv("OPENAI_API_KEY", "default-key")
+        monkeypatch.setenv("APIBEST_API_KEY", "apibest-key")
+        (tmp_path / "config.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "image_gen": {
+                        "openai": {
+                            "base_url": "https://apibest.ai/v1",
+                            "key_env": "APIBEST_API_KEY",
+                        }
+                    }
+                }
+            )
+        )
+
+        api_key, base_url = openai_plugin._resolve_api_config()
+
+        assert api_key == "apibest-key"
+        assert base_url == "https://apibest.ai/v1"
+
 
 # ── Model resolution ────────────────────────────────────────────────────────
 
