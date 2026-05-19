@@ -1478,9 +1478,11 @@ DEFAULT_CONFIG = {
     },
 
     "gateway": {
-        # Local paths that outbound MEDIA: directives and auto-detected local
-        # file attachments may upload to messaging platforms. Paths support
-        # ~ and env vars; ~/.hermes resolves to the active Hermes profile home.
+        # Local paths that text-extracted outbound MEDIA: directives and
+        # auto-detected local file attachments may upload to messaging
+        # platforms. Explicit tool attachments bypass this leak guard. Paths
+        # support ~ and env vars; ~/.hermes resolves to the active Hermes
+        # profile home.
         "outbound_media_allowlist": [
             "/tmp/",
             "~/.hermes/audio_cache/",

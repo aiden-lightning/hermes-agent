@@ -535,7 +535,6 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     from gateway.config import Platform
     from gateway.platforms.base import (
         BasePlatformAdapter,
-        filter_outbound_media_files,
         utf16_len,
     )
     from gateway.platforms.discord import DiscordAdapter
@@ -555,7 +554,10 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     except ImportError:
         _feishu_available = False
 
-    media_files = filter_outbound_media_files(media_files or [], "send_message")
+    # ``media_files`` here came from an explicit send_message tool call. The
+    # outbound media allowlist is only for local paths auto-extracted from
+    # gateway response text, where accidental path leakage is plausible.
+    media_files = media_files or []
 
     if platform == Platform.SLACK and message:
         try:

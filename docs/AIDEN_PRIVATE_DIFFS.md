@@ -68,7 +68,7 @@
 
 3. **Feishu 原生媒体、线程和消息路由**
    - 改进 Feishu native media delivery：文件、图片、语音等 `MEDIA:` 路由更贴近 Feishu adapter 的原生发送能力。
-   - 对 outbound `MEDIA:` / 本地文件附件增加可配置安全 allowlist，默认仅允许 `/tmp/`、`~/.hermes/audio_cache/`、`~/.hermes/image_cache/`、`~/.hermes/generated/`，防止模型文本、历史记录或调试输出中的敏感本地路径被上传。
+   - 对从模型文本、历史记录或调试输出中自动提取的 outbound `MEDIA:` / 本地文件附件增加可配置安全 allowlist，默认仅允许 `/tmp/`、`~/.hermes/audio_cache/`、`~/.hermes/image_cache/`、`~/.hermes/generated/`；显式工具附件发送不受该文本泄漏防护拦截。
    - 改进 thread routing / parent message 处理。
    - 对 `edit_message` 临时传输错误增加重试。
    - 相关 commit：

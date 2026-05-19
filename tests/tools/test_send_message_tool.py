@@ -433,6 +433,30 @@ class TestSendTelegramMediaDelivery:
 
 
 class TestSendToPlatformChunking:
+    def test_explicit_media_attachment_bypasses_outbound_text_allowlist(self, tmp_path, monkeypatch):
+        """send_message media_files are intentional attachments, not text leaks."""
+        media_path = tmp_path / "private-output.png"
+        media_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        pconfig = SimpleNamespace(token="token", extra={})
+
+        send_telegram = AsyncMock(return_value={"success": True, "message_id": "2"})
+        monkeypatch.setenv("HERMES_OUTBOUND_MEDIA_ALLOWLIST", "/tmp/allowed-only")
+
+        with patch("tools.send_message_tool._send_telegram", send_telegram):
+            result = asyncio.run(
+                _send_to_platform(
+                    Platform.TELEGRAM,
+                    pconfig,
+                    "12345",
+                    "Here is the image",
+                    media_files=[(str(media_path), False)],
+                )
+            )
+
+        assert result["success"] is True
+        send_telegram.assert_awaited_once()
+        assert send_telegram.await_args.kwargs["media_files"] == [(str(media_path), False)]
+
     def test_long_message_is_chunked(self):
         """Messages exceeding the platform limit are split into multiple sends."""
         send = AsyncMock(return_value={"success": True, "message_id": "1"})
