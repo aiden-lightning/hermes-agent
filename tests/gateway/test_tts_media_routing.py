@@ -62,7 +62,7 @@ def test_outbound_media_allowlist_requires_real_directory_containment():
     assert not is_outbound_media_path_allowed("/etc/passwd")
 
 
-def test_outbound_media_allowlist_does_not_include_generic_hermes_cache(tmp_path, monkeypatch):
+def test_outbound_media_allowlist_includes_generic_hermes_cache(tmp_path, monkeypatch):
     hermes_home = tmp_path / ".hermes"
     cache_media = hermes_home / "cache" / "images" / "generated.png"
     cache_media.parent.mkdir(parents=True)
@@ -70,7 +70,7 @@ def test_outbound_media_allowlist_does_not_include_generic_hermes_cache(tmp_path
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.delenv("HERMES_OUTBOUND_MEDIA_ALLOWLIST", raising=False)
 
-    assert not is_outbound_media_path_allowed(str(cache_media))
+    assert is_outbound_media_path_allowed(str(cache_media))
 
 
 @pytest.mark.asyncio

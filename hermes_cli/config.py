@@ -1485,6 +1485,7 @@ DEFAULT_CONFIG = {
         # profile home.
         "outbound_media_allowlist": [
             "/tmp/",
+            "~/.hermes/cache/",
             "~/.hermes/audio_cache/",
             "~/.hermes/image_cache/",
             "~/.hermes/generated/",

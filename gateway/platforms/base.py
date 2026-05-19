@@ -112,6 +112,7 @@ def should_send_media_as_audio(platform, ext: str, is_voice: bool = False) -> bo
 
 DEFAULT_OUTBOUND_MEDIA_ALLOWLIST = (
     "/tmp/",
+    "~/.hermes/cache/",
     "~/.hermes/audio_cache/",
     "~/.hermes/image_cache/",
     "~/.hermes/generated/",
