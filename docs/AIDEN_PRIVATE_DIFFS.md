@@ -4,7 +4,7 @@
 > 仓库：`/Users/dev/.hermes/hermes-agent`  
 > 本地私有分支：`main` / `origin/main` (`git@github.com:aiden-lightning/hermes-agent.git`)  
 > 官方上游：`upstream/main` (`https://github.com/NousResearch/hermes-agent.git`)
-> 最后同步：2026-05-18 — `git merge upstream/main` 完成，413 commits merged。
+> 最后同步：2026-05-20 — `git merge upstream/main` 已完成冲突解决并暂存，333 commits merged。
 
 本文记录 `biden-agent` 与 `aiden-lightning` 两个 Git 作者在私有分支上相对官方代码保留的主要改动，用于后续同步上游、排查行为差异、以及判断哪些补丁需要继续维护或尝试 upstream。
 
@@ -12,7 +12,7 @@
 
 基于 `git fetch --all --prune` 后的结果：
 
-- `main` 相对 `upstream/main`（同步后）：ahead **50+** 私有 commits（含 merge commit），behind **0**（已合并所有上游改动）。
+- `main` 相对 `upstream/main`（同步后）：ahead **约 68+** 私有 commits（含 merge commit），behind **0**（已合并所有上游改动）。
 - 工作区已暂存所有冲突解决，等待提交。
 - 私有 ahead commits 作者分布：
   - `Lightning@Aiden <aiden-lightning@users.noreply.github.com>`：33 个 commit
@@ -377,7 +377,14 @@ Merge commits：
    - `.gitmodules` 与 `moss_tts_nano_repo` 需要在 clone/update 时保持可用。
    - 相关测试应确保无模型权重环境下仍可 mock 通过。
 
-5. **最近一次 upstream 同步（2026-05-18）**
+5. **最近一次 upstream 同步（2026-05-20）**
+   - 合并 333 个上游 commits。
+   - 冲突解决位于 `README.md`、`cron/jobs.py`、`gateway/platforms/base.py`、`gateway/run.py`、`gateway/session_context.py`、`hermes_cli/kanban_db.py`、`hermes_state.py`、`run_agent.py`、`scripts/install.cmd`、`scripts/install.ps1`、`scripts/install.sh`、`tests/gateway/test_background_process_notifications.py`、`tests/tools/test_session_search.py`、`tools/session_search_tool.py`。
+   - 安装脚本/README 继续指向 Aiden fork，同时吸收上游安装器改进（PowerShell 调用与 ZIP ref fallback）。
+   - Gateway/session-context 冲突保留私有 enabled-toolsets/user/session 隔离、no-reply 过滤和群历史 metadata，同时吸收上游 message-id/thread restoration 与 TTS caption suppression。
+   - Cron/profile、session search、kanban DB 与 `run_agent.py` 冲突保留私有 ACL/过滤/说明性迁移语义，同时吸收上游 profile normalization、anchored session browse/discover/scroll、helper-forwarder compression path。
+
+6. **上一轮 upstream 同步（2026-05-18）**
    - 合并 413 个上游 commits。
    - 冲突解决位于 `.gitmodules`、`gateway/platforms/base.py`、`gateway/run.py`、`run_agent.py`、`tools/cronjob_tools.py`、`tools/tts_tool.py`。
    - `.gitmodules` 保留私有 `moss_tts_nano_repo` submodule，删除上游已移除/本地不存在的 `tinker-atropos` submodule。
@@ -386,7 +393,7 @@ Merge commits：
    - `tools/cronjob_tools.py` 合并上游 name-based `resolve_job_ref` 与私有 gateway cron owner/ACL 检查。
    - `tools/tts_tool.py` 合并上游 xAI OAuth credential 检测/说明与私有 MOSS-TTS-Nano provider 文档和行为。
 
-6. **上一轮 upstream 同步（2026-05-14）**
+7. **上一轮 upstream 同步（2026-05-14）**
    - 合并 172 个上游 commits。
    - 冲突解决位于 `gateway/run.py`、`hermes_cli/memory_setup.py`。
    - `gateway/run.py` 同时保留 Aiden per-user/platform command permission enforcement 与上游 free-form `clarify` reply interception；非 slash 文本仅在同 session 存在 pending clarify 时先解析为答案，slash command 与其它普通文本仍走权限检查。
@@ -430,7 +437,43 @@ Merge commits：
 
 ## 6. 历次上游同步冲突解决记录
 
-### 6.1 本次上游同步冲突解决记录（2026-05-18）
+### 6.1 本次上游同步冲突解决记录（2026-05-20）
+
+合并 333 个 upstream commits，14 个文件存在冲突。以下为主要冲突的解决策略：
+
+#### 6.1.1 `README.md` 与安装脚本
+
+- 冲突文件：`README.md`、`scripts/install.sh`、`scripts/install.ps1`、`scripts/install.cmd`。
+- 解决策略：保留 Aiden fork 的安装入口（`aiden-lightning/hermes-agent`），同时吸收上游安装器改进，例如 PowerShell 安全调用与 ref-aware ZIP fallback。
+
+#### 6.1.2 Gateway / session context
+
+- 冲突文件：`gateway/platforms/base.py`、`gateway/run.py`、`gateway/session_context.py`。
+- 解决策略：保留私有 enabled-toolsets/user/session 隔离、no-reply sentinel 过滤、group-history metadata 与 Feishu/gateway 私有路由语义，同时吸收上游 message-id/thread restoration、TTS caption suppression 等修复。
+
+#### 6.1.3 Cron/profile 与 Kanban DB
+
+- 冲突文件：`cron/jobs.py`、`hermes_cli/kanban_db.py`。
+- 解决策略：保留私有 `enabled_toolsets` normalization 与说明性迁移注释，吸收上游 `profile` normalization 和 Kanban schema/migration 更新。
+
+#### 6.1.4 Session search / Hermes state
+
+- 冲突文件：`hermes_state.py`、`tools/session_search_tool.py`、`tests/tools/test_session_search.py`。
+- 解决策略：保留上游 anchored browse/discover/scroll session-search model 与排序支持，同时继续保留私有 source/user filtering、unowned session controls 和 Feishu/session-search 隔离语义。
+
+#### 6.1.5 `run_agent.py`
+
+- 冲突点在 context compression helper-forwarder 附近。
+- 解决策略：保留上游 helper-forwarder compression path 和 `force` 参数，删除冲突遗留的 stale inline body，避免未来上游 helper 修复被 shadow。
+
+#### 6.1.6 本次验证
+
+- OpenCode 冲突解决阶段运行：`python -m py_compile cron/jobs.py gateway/platforms/base.py gateway/run.py gateway/session_context.py hermes_cli/kanban_db.py hermes_state.py run_agent.py tests/gateway/test_background_process_notifications.py tests/tools/test_session_search.py tools/session_search_tool.py`
+- OpenCode 冲突解决阶段运行：`bash -n scripts/install.sh`
+- OpenCode 冲突解决阶段运行：`git diff --check -- <scoped files>`
+- 父 agent 复核：`git diff --name-only --diff-filter=U` 为空；anchored conflict-marker scan 未发现真实冲突标记（仅文档/分隔线 false positives）。
+
+### 6.2 上游同步冲突解决记录（2026-05-18）
 
 合并 413 个 upstream commits，6 个文件存在冲突。以下为每处冲突的解决策略：
 

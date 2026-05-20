@@ -109,6 +109,7 @@ class ProcessSession:
     watcher_user_id: str = ""
     watcher_user_name: str = ""
     watcher_thread_id: str = ""
+    watcher_message_id: str = ""                # Triggering message id — reply anchor for topic routing
     watcher_interval: int = 0                   # 0 = no watcher configured
     notify_on_complete: bool = False             # Queue agent notification on exit
     # Watch patterns — trigger agent notification when output matches any pattern
@@ -293,6 +294,7 @@ class ProcessRegistry:
                     "user_id": session.watcher_user_id,
                     "user_name": session.watcher_user_name,
                     "thread_id": session.watcher_thread_id,
+                    "message_id": session.watcher_message_id,
                     "message": (
                         f"Watch patterns disabled for process {session.id} — "
                         f"{WATCH_STRIKE_LIMIT} consecutive rate-limit windows triggered "
@@ -325,6 +327,7 @@ class ProcessRegistry:
             "user_id": session.watcher_user_id,
             "user_name": session.watcher_user_name,
             "thread_id": session.watcher_thread_id,
+            "message_id": session.watcher_message_id,
         })
 
     def _global_watch_admit(self, now: float) -> bool:
@@ -570,7 +573,7 @@ class ProcessRegistry:
             errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             preexec_fn=None if _IS_WINDOWS else os.setsid,
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
         )
@@ -1329,6 +1332,7 @@ class ProcessRegistry:
                             "watcher_user_id": s.watcher_user_id,
                             "watcher_user_name": s.watcher_user_name,
                             "watcher_thread_id": s.watcher_thread_id,
+                            "watcher_message_id": s.watcher_message_id,
                             "watcher_interval": s.watcher_interval,
                             "notify_on_complete": s.notify_on_complete,
                             "watch_patterns": s.watch_patterns,
@@ -1392,6 +1396,7 @@ class ProcessRegistry:
                     watcher_user_id=entry.get("watcher_user_id", ""),
                     watcher_user_name=entry.get("watcher_user_name", ""),
                     watcher_thread_id=entry.get("watcher_thread_id", ""),
+                    watcher_message_id=entry.get("watcher_message_id", ""),
                     watcher_interval=entry.get("watcher_interval", 0),
                     notify_on_complete=entry.get("notify_on_complete", False),
                     watch_patterns=entry.get("watch_patterns", []),
@@ -1412,6 +1417,7 @@ class ProcessRegistry:
                         "user_id": session.watcher_user_id,
                         "user_name": session.watcher_user_name,
                         "thread_id": session.watcher_thread_id,
+                        "message_id": session.watcher_message_id,
                         "notify_on_complete": session.notify_on_complete,
                     })
 
