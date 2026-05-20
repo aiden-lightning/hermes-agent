@@ -466,12 +466,19 @@ Merge commits：
 - 冲突点在 context compression helper-forwarder 附近。
 - 解决策略：保留上游 helper-forwarder compression path 和 `force` 参数，删除冲突遗留的 stale inline body，避免未来上游 helper 修复被 shadow。
 
-#### 6.1.6 本次验证
+#### 6.1.6 Claude 复核后 follow-up
+
+- Claude Code 复核先返回“无问题”，但父 agent 独立扩大 focused regression 后发现 Feishu approval callback regression：`_submit_on_loop(...)` 的兼容 mock/legacy 返回值 `None` 被 `not ...` 当作调度失败，导致合法审批点击返回空 callback response card。
+- 解决策略：`gateway/platforms/feishu.py` 中仅将 `_submit_on_loop(...) is False` 视为调度失败，保留上游 safe scheduling 的显式失败语义，同时恢复私有审批 callback card 行为。
+- 复核中还重新验证 cron gateway toolset inheritance / ACL，最终 focused set 通过。
+
+#### 6.1.7 本次验证
 
 - OpenCode 冲突解决阶段运行：`python -m py_compile cron/jobs.py gateway/platforms/base.py gateway/run.py gateway/session_context.py hermes_cli/kanban_db.py hermes_state.py run_agent.py tests/gateway/test_background_process_notifications.py tests/tools/test_session_search.py tools/session_search_tool.py`
 - OpenCode 冲突解决阶段运行：`bash -n scripts/install.sh`
 - OpenCode 冲突解决阶段运行：`git diff --check -- <scoped files>`
 - 父 agent 复核：`git diff --name-only --diff-filter=U` 为空；anchored conflict-marker scan 未发现真实冲突标记（仅文档/分隔线 false positives）。
+- Claude 复核后父 agent / OpenCode follow-up：`scripts/run_tests.sh tests/gateway/test_feishu.py tests/gateway/test_feishu_approval_buttons.py tests/gateway/test_no_reply_sentinel.py tests/cron/test_cron_profile.py tests/tools/test_cronjob_tools.py tests/tools/test_session_search.py tests/gateway/test_background_process_notifications.py tests/hermes_state/test_get_anchored_view.py tests/hermes_state/test_get_messages_around.py -q` → `505 passed, 8 warnings`。
 
 ### 6.2 上游同步冲突解决记录（2026-05-18）
 

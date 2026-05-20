@@ -3361,7 +3361,7 @@ class FeishuAdapter(BasePlatformAdapter):
             )
             return self._approval_callback_response(self._build_unauthorized_approval_card())
 
-        if not self._submit_on_loop(loop, self._resolve_approval(approval_id, choice, user_name)):
+        if self._submit_on_loop(loop, self._resolve_approval(approval_id, choice, user_name)) is False:
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         return self._approval_callback_response(
