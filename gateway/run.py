@@ -1130,7 +1130,7 @@ def _check_unavailable_skill(command_name: str) -> str | None:
     normalized = command_name.lower().replace("_", "-")
     try:
         from tools.skills_tool import _get_disabled_skill_names
-        from agent.skill_utils import get_all_skills_dirs
+        from agent.skill_utils import get_all_skills_dirs, is_excluded_skill_path
         disabled = _get_disabled_skill_names()
 
         # Check disabled skills across all dirs (local + external)
@@ -1138,7 +1138,7 @@ def _check_unavailable_skill(command_name: str) -> str | None:
             if not skills_dir.exists():
                 continue
             for skill_md in skills_dir.rglob("SKILL.md"):
-                if any(part in {'.git', '.github', '.hub', '.archive'} for part in skill_md.parts):
+                if is_excluded_skill_path(skill_md):
                     continue
                 slug, declared_name = _skill_slug_from_frontmatter(skill_md)
                 if not slug or not declared_name:
@@ -1157,6 +1157,8 @@ def _check_unavailable_skill(command_name: str) -> str | None:
         optional_dir = get_optional_skills_dir(repo_root / "optional-skills")
         if optional_dir.exists():
             for skill_md in optional_dir.rglob("SKILL.md"):
+                if is_excluded_skill_path(skill_md):
+                    continue
                 slug, _declared = _skill_slug_from_frontmatter(skill_md)
                 if not slug:
                     continue
@@ -6635,10 +6637,11 @@ class GatewayRunner:
 
     def _resolve_session_owner_user_id(self, source: SessionSource) -> Optional[str]:
         """Return the DB owner/scope key for session history visibility."""
+        config = getattr(self, "config", None)
         return build_session_owner_key(
             source,
-            group_sessions_per_user=getattr(self.config, "group_sessions_per_user", True),
-            thread_sessions_per_user=getattr(self.config, "thread_sessions_per_user", False),
+            group_sessions_per_user=getattr(config, "group_sessions_per_user", True),
+            thread_sessions_per_user=getattr(config, "thread_sessions_per_user", False),
         )
 
     def _resolve_effective_enabled_toolsets(
@@ -18242,14 +18245,31 @@ class GatewayRunner:
 
             # Wait for stream consumer to finish its final edit
             if stream_task:
-                try:
-                    await asyncio.wait_for(stream_task, timeout=5.0)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
+                # If the agent never created a stream consumer (e.g. non-
+                # streaming code path, or a test stub returning synchronously)
+                # there is nothing to flush — cancel immediately instead of
+                # waiting out the 5s timeout on a task that's just polling for
+                # a consumer that will never arrive.  This was a 5-second
+                # cost per non-streaming test run.
+                _has_stream_consumer = (
+                    stream_consumer_holder
+                    and stream_consumer_holder[0] is not None
+                )
+                if not _has_stream_consumer:
                     stream_task.cancel()
                     try:
                         await stream_task
                     except asyncio.CancelledError:
                         pass
+                else:
+                    try:
+                        await asyncio.wait_for(stream_task, timeout=5.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        stream_task.cancel()
+                        try:
+                            await stream_task
+                        except asyncio.CancelledError:
+                            pass
             
             # Clean up tracking
             tracking_task.cancel()
