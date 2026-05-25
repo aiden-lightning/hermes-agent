@@ -4,7 +4,7 @@
 > 仓库：`/Users/dev/.hermes/hermes-agent`  
 > 本地私有分支：`main` / `origin/main` (`git@github.com:aiden-lightning/hermes-agent.git`)  
 > 官方上游：`upstream/main` (`https://github.com/NousResearch/hermes-agent.git`)
-> 最后同步：2026-05-22 — `git merge upstream/main` 已完成冲突解决并暂存，149 commits merged。
+> 最后同步：2026-05-25 — `git merge upstream/main` 已完成冲突解决并暂存，314 commits merged。
 
 本文记录 `biden-agent` 与 `aiden-lightning` 两个 Git 作者在私有分支上相对官方代码保留的主要改动，用于后续同步上游、排查行为差异、以及判断哪些补丁需要继续维护或尝试 upstream。
 
@@ -12,7 +12,7 @@
 
 基于 `git fetch --all --prune` 后的结果：
 
-- `main` 相对 `upstream/main`（同步后）：ahead **约 68+** 私有 commits（含 merge commit），behind **0**（已合并所有上游改动）。
+- `main` 相对 `upstream/main`（同步后、提交前）：ahead **71** 私有/merge commits，behind **0**（已合并所有上游改动）。
 - 工作区已暂存所有冲突解决，等待提交。
 - 私有 ahead commits 作者分布：
   - `Lightning@Aiden <aiden-lightning@users.noreply.github.com>`：33 个 commit
@@ -377,20 +377,28 @@ Merge commits：
    - `.gitmodules` 与 `moss_tts_nano_repo` 需要在 clone/update 时保持可用。
    - 相关测试应确保无模型权重环境下仍可 mock 通过。
 
-5. **最近一次 upstream 同步（2026-05-22）**
+5. **最近一次 upstream 同步（2026-05-25）**
+   - 合并 314 个上游 commits。
+   - 冲突解决位于 `cron/scheduler.py`、`gateway/platforms/feishu.py`、`gateway/run.py`、`tests/cron/test_scheduler.py`、`tests/gateway/test_tts_media_routing.py`、`tests/tools/test_send_message_tool.py`、`tools/send_message_tool.py`。
+   - Cron 合并上游 disabled_toolsets 安全 denylist / context_from provenance logging，同时保留私有 outbound media allowlist 过滤。
+   - Feishu 合并上游 webhook verification/extra config 与私有审批卡点击鉴权、chat mismatch 防护。
+   - Gateway 合并上游 group-context/session wrapping 与私有 Feishu/telemetry/session diagnostic 行为。
+   - Media/send_message 合并上游 centralized safe-root filtering 与私有 outbound MEDIA allowlist 防泄漏策略。
+
+6. **上一轮 upstream 同步（2026-05-22）**
    - 合并 149 个上游 commits。
    - 冲突解决位于 `scripts/run_tests.sh`、`tui_gateway/server.py`。
    - `scripts/run_tests.sh` 采用上游 `run_tests_parallel.py` per-file hermetic runner，同时保留私有 live-gateway pytest guard 的 `EXTRA_PYTHONPATH` / `EXTRA_PYTEST_PLUGINS` env passthrough。
    - `tui_gateway/server.py` 保留私有 `executable_note` 诊断，同时吸收上游更宽泛的 Chromium-family browser connect 指引。
 
-6. **上一轮 upstream 同步（2026-05-20）**
+7. **上一轮 upstream 同步（2026-05-20）**
    - 合并 333 个上游 commits。
    - 冲突解决位于 `README.md`、`cron/jobs.py`、`gateway/platforms/base.py`、`gateway/run.py`、`gateway/session_context.py`、`hermes_cli/kanban_db.py`、`hermes_state.py`、`run_agent.py`、`scripts/install.cmd`、`scripts/install.ps1`、`scripts/install.sh`、`tests/gateway/test_background_process_notifications.py`、`tests/tools/test_session_search.py`、`tools/session_search_tool.py`。
    - 安装脚本/README 继续指向 Aiden fork，同时吸收上游安装器改进（PowerShell 调用与 ZIP ref fallback）。
    - Gateway/session-context 冲突保留私有 enabled-toolsets/user/session 隔离、no-reply 过滤和群历史 metadata，同时吸收上游 message-id/thread restoration 与 TTS caption suppression。
    - Cron/profile、session search、kanban DB 与 `run_agent.py` 冲突保留私有 ACL/过滤/说明性迁移语义，同时吸收上游 profile normalization、anchored session browse/discover/scroll、helper-forwarder compression path。
 
-7. **上一轮 upstream 同步（2026-05-18）**
+8. **上一轮 upstream 同步（2026-05-18）**
    - 合并 413 个上游 commits。
    - 冲突解决位于 `.gitmodules`、`gateway/platforms/base.py`、`gateway/run.py`、`run_agent.py`、`tools/cronjob_tools.py`、`tools/tts_tool.py`。
    - `.gitmodules` 保留私有 `moss_tts_nano_repo` submodule，删除上游已移除/本地不存在的 `tinker-atropos` submodule。
@@ -399,7 +407,7 @@ Merge commits：
    - `tools/cronjob_tools.py` 合并上游 name-based `resolve_job_ref` 与私有 gateway cron owner/ACL 检查。
    - `tools/tts_tool.py` 合并上游 xAI OAuth credential 检测/说明与私有 MOSS-TTS-Nano provider 文档和行为。
 
-8. **上一轮 upstream 同步（2026-05-14）**
+9. **上一轮 upstream 同步（2026-05-14）**
    - 合并 172 个上游 commits。
    - 冲突解决位于 `gateway/run.py`、`hermes_cli/memory_setup.py`。
    - `gateway/run.py` 同时保留 Aiden per-user/platform command permission enforcement 与上游 free-form `clarify` reply interception；非 slash 文本仅在同 session 存在 pending clarify 时先解析为答案，slash command 与其它普通文本仍走权限检查。
@@ -443,7 +451,30 @@ Merge commits：
 
 ## 6. 历次上游同步冲突解决记录
 
-### 6.1 本次上游同步冲突解决记录（2026-05-22）
+### 6.1 本次上游同步冲突解决记录（2026-05-25）
+
+合并 314 个 upstream commits，7 个文件存在冲突。以下为主要冲突的解决策略：
+
+1. `cron/scheduler.py`
+   - 合并上游 cron agent disabled toolsets denylist 与 context_from provenance logging。
+   - 保留私有 outbound `MEDIA:` allowlist 过滤，并在上游 centralized safe-root filtering 后继续执行平台级 allowlist。
+
+2. `gateway/platforms/feishu.py`
+   - 吸收上游 webhook mode 配置/verification 检查。
+   - 保留私有审批卡点击鉴权、requester/admin/stable-ID 校验、chat mismatch 防护与 stale/unauthorized card response。
+
+3. `gateway/run.py`
+   - 吸收上游 group context wrapping/session handling 改动。
+   - 保留私有 Feishu/gateway telemetry、session diagnostic 和审批 metadata 行为。
+
+4. `tests/cron/test_scheduler.py`
+   - 合并上游 cron security regression tests 与私有 `_safe_media_path` / outbound media allowlist tests。
+
+5. `tests/gateway/test_tts_media_routing.py`、`tests/tools/test_send_message_tool.py`、`tools/send_message_tool.py`
+   - 合并上游 centralized media safe-root filtering 与私有 outbound `MEDIA:` allowlist 防本地文件泄漏策略。
+   - 保留显式工具附件发送路径与文本自动提取媒体路径的不同安全语义。
+
+### 6.2 上一次上游同步冲突解决记录（2026-05-22）
 
 合并 149 个 upstream commits，2 个文件存在冲突。以下为主要冲突的解决策略：
 

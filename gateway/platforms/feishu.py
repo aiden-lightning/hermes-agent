@@ -1830,8 +1830,10 @@ class FeishuAdapter(BasePlatformAdapter):
             connection_mode=str(
                 extra.get("connection_mode") or os.getenv("FEISHU_CONNECTION_MODE", "websocket")
             ).strip().lower(),
-            encrypt_key=os.getenv("FEISHU_ENCRYPT_KEY", "").strip(),
-            verification_token=os.getenv("FEISHU_VERIFICATION_TOKEN", "").strip(),
+            encrypt_key=str(extra.get("encrypt_key") or os.getenv("FEISHU_ENCRYPT_KEY", "")).strip(),
+            verification_token=str(
+                extra.get("verification_token") or os.getenv("FEISHU_VERIFICATION_TOKEN", "")
+            ).strip(),
             group_policy=os.getenv("FEISHU_GROUP_POLICY", "allowlist").strip().lower(),
             allowed_group_users=frozenset(
                 item.strip()
@@ -2022,6 +2024,11 @@ class FeishuAdapter(BasePlatformAdapter):
             logger.error(
                 "[Feishu] Unsupported FEISHU_CONNECTION_MODE=%s. Supported modes: websocket, webhook.",
                 self._connection_mode,
+            )
+            return False
+        if self._connection_mode == "webhook" and not (self._verification_token or self._encrypt_key):
+            logger.error(
+                "[Feishu] Webhook mode requires FEISHU_VERIFICATION_TOKEN or FEISHU_ENCRYPT_KEY."
             )
             return False
 
@@ -3342,6 +3349,10 @@ class FeishuAdapter(BasePlatformAdapter):
         if approval_id is None:
             logger.debug("[Feishu] Card action missing approval_id, ignoring")
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
+        state = self._approval_state.get(approval_id)
+        if not state:
+            logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
+            return self._approval_callback_response(self._build_stale_approval_card())
         choice = _APPROVAL_CHOICE_MAP.get(action_value.get("hermes_action"), "deny")
 
         operator = getattr(event, "operator", None)
@@ -3350,10 +3361,6 @@ class FeishuAdapter(BasePlatformAdapter):
         union_id = str(getattr(operator, "union_id", "") or "")
         user_name = self._get_cached_sender_name(open_id) or open_id or union_id or user_id
 
-        state = self._approval_state.get(approval_id)
-        if state is None:
-            logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
-            return self._approval_callback_response(self._build_stale_approval_card())
         if not self._is_approval_operator_authorized(state, open_id=open_id, user_id=user_id, union_id=union_id):
             logger.info(
                 "Ignoring unauthorized Feishu approval click for approval %s (open_id=%s, user_id=%s, union_id=%s)",
@@ -3361,7 +3368,31 @@ class FeishuAdapter(BasePlatformAdapter):
             )
             return self._approval_callback_response(self._build_unauthorized_approval_card())
 
-        if self._submit_on_loop(loop, self._resolve_approval(approval_id, choice, user_name)) is False:
+        callback_chat_id = str(getattr(getattr(event, "context", None), "open_chat_id", "") or "")
+        expected_chat_id = str(state.get("chat_id", "") or "")
+        if callback_chat_id and expected_chat_id and callback_chat_id != expected_chat_id:
+            logger.warning(
+                "[Feishu] Approval callback chat mismatch for %s (expected=%s, got=%s)",
+                approval_id,
+                expected_chat_id,
+                callback_chat_id,
+            )
+            return self._approval_callback_response(self._build_unauthorized_approval_card())
+
+        chat_context = getattr(event, "context", None)
+        chat_id = str(getattr(chat_context, "open_chat_id", "") or "")
+        if not self._submit_on_loop(
+            loop,
+            self._resolve_approval(
+                approval_id=approval_id,
+                choice=choice,
+                user_name=user_name,
+                open_id=open_id,
+                user_id=user_id,
+                union_id=union_id,
+                chat_id=chat_id,
+            ),
+        ):
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         return self._approval_callback_response(
@@ -3390,7 +3421,7 @@ class FeishuAdapter(BasePlatformAdapter):
             if value
         }
         if not requester_ids:
-            return True
+            return self._is_interactive_operator_authorized(open_id)
         return bool(operator_ids & requester_ids)
 
     @staticmethod
@@ -3440,11 +3471,41 @@ class FeishuAdapter(BasePlatformAdapter):
             response.card = card
         return response
 
-    async def _resolve_approval(self, approval_id: Any, choice: str, user_name: str) -> None:
+    async def _resolve_approval(
+        self,
+        approval_id: Any,
+        choice: str,
+        user_name: str,
+        *,
+        open_id: str = "",
+        user_id: str = "",
+        union_id: str = "",
+        chat_id: str = "",
+    ) -> None:
         """Pop approval state and unblock the waiting agent thread."""
-        state = self._approval_state.pop(approval_id, None)
+        state = self._approval_state.get(approval_id)
         if not state:
             logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
+            return
+        authorized = self._is_approval_operator_authorized(
+            state,
+            open_id=open_id,
+            user_id=user_id,
+            union_id=union_id,
+        )
+        if not authorized:
+            logger.warning("[Feishu] Unauthorized approval click by %s for approval %s", open_id or "<unknown>", approval_id)
+            return
+        expected_chat_id = str(state.get("chat_id", "") or "")
+        if expected_chat_id and chat_id and expected_chat_id != chat_id:
+            logger.warning(
+                "[Feishu] Approval %s chat mismatch (expected=%s, got=%s)",
+                approval_id, expected_chat_id, chat_id,
+            )
+            return
+        state = self._approval_state.pop(approval_id, None)
+        if not state:
+            logger.debug("[Feishu] Approval %s already resolved while validating callback", approval_id)
             return
         try:
             from tools.approval import resolve_gateway_approval
@@ -4108,11 +4169,6 @@ class FeishuAdapter(BasePlatformAdapter):
             self._record_webhook_anomaly(remote_ip, "400")
             return web.json_response({"code": 400, "msg": "invalid json"}, status=400)
 
-        # URL verification challenge — respond before other checks so that Feishu's
-        # subscription setup works even before encrypt_key is wired.
-        if payload.get("type") == "url_verification":
-            return web.json_response({"challenge": payload.get("challenge", "")})
-
         # Verification token check — second layer of defence beyond signature (matches openclaw).
         if self._verification_token:
             header = payload.get("header") or {}
@@ -4121,6 +4177,13 @@ class FeishuAdapter(BasePlatformAdapter):
                 logger.warning("[Feishu] Webhook rejected: invalid verification token from %s", remote_ip)
                 self._record_webhook_anomaly(remote_ip, "401-token")
                 return web.Response(status=401, text="Invalid verification token")
+
+        # URL verification challenge — Feishu includes the verification token in
+        # challenge requests. Validate the token (above) before reflecting the
+        # challenge so an unauthenticated remote request cannot prove endpoint
+        # control by getting attacker-supplied challenge data echoed back.
+        if payload.get("type") == "url_verification":
+            return web.json_response({"challenge": payload.get("challenge", "")})
 
         # Timing-safe signature verification (only enforced when encrypt_key is set).
         if self._encrypt_key and not self._is_webhook_signature_valid(request.headers, body_bytes):
