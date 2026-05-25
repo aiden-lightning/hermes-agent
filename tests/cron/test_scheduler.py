@@ -604,6 +604,46 @@ class TestDeliverResultWrapping:
         # Media files should be forwarded separately
         assert kwargs["media_files"] == [(str(media_path), False)]
 
+    def test_delivery_uses_gateway_outbound_media_allowlist_without_legacy_env(self, tmp_path, monkeypatch):
+        """Cron media delivery should honor gateway.outbound_media_allowlist directly.
+
+        This catches regressions where cron first accepts a path via the
+        centralized safe-root filter and then drops it through the legacy
+        HERMES_OUTBOUND_MEDIA_ALLOWLIST/default-root filter.
+        """
+        from gateway.config import Platform
+
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        allowed_dir = tmp_path / "configured-media"
+        allowed_dir.mkdir()
+        media_path = (allowed_dir / "report.pdf").resolve()
+        media_path.write_bytes(b"%PDF-1.4\n")
+        (hermes_home / "config.yaml").write_text(
+            "gateway:\n  outbound_media_allowlist:\n    - " + repr(str(allowed_dir)) + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.delenv("HERMES_OUTBOUND_MEDIA_ALLOWLIST", raising=False)
+
+        pconfig = MagicMock()
+        pconfig.enabled = True
+        mock_cfg = MagicMock()
+        mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
+
+        with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}):
+            job = {
+                "id": "configured-media-job",
+                "deliver": "origin",
+                "origin": {"platform": "telegram", "chat_id": "123"},
+            }
+            _deliver_result(job, f"Report\nMEDIA:{media_path}")
+
+        send_mock.assert_called_once()
+        assert send_mock.call_args.kwargs["media_files"] == [(str(media_path), False)]
+
     def test_delivery_blocks_sensitive_media_tags_before_send(self, tmp_path, monkeypatch):
         """Cron delivery should not forward MEDIA files outside the outbound allowlist."""
         from gateway.config import Platform
