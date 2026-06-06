@@ -523,8 +523,9 @@ class TestFetchEndpointModelMetadataNegativeCache:
 
         cache_path = tmp_path / "endpoint_probe_failures.yaml"
         stale_time = time.time() - (model_metadata._ENDPOINT_PROBE_FAILURE_CACHE_TTL + 1)
+        cache_key = model_metadata._endpoint_metadata_cache_key("https://apibest.ai/v1")
         cache_path.write_text(
-            f"failed_probes:\n  https://apibest.ai/v1: {stale_time}\n",
+            f"failed_probes:\n  \"{cache_key}\": {stale_time}\n",
             encoding="utf-8",
         )
 
@@ -546,8 +547,9 @@ class TestFetchEndpointModelMetadataNegativeCache:
         from agent import model_metadata
 
         cache_path = tmp_path / "endpoint_probe_failures.yaml"
+        cache_key = model_metadata._endpoint_metadata_cache_key("https://apibest.ai/v1")
         cache_path.write_text(
-            f"failed_probes:\n  https://apibest.ai/v1: {time.time()}\n",
+            f"failed_probes:\n  \"{cache_key}\": {time.time()}\n",
             encoding="utf-8",
         )
 
@@ -563,7 +565,38 @@ class TestFetchEndpointModelMetadataNegativeCache:
             )
 
         assert result["foo"]["context_length"] == 65536
-        assert "https://apibest.ai/v1" not in cache_path.read_text(encoding="utf-8")
+        assert cache_key not in cache_path.read_text(encoding="utf-8")
+
+    def test_failed_custom_endpoint_probe_cache_is_scoped_by_api_key(self, tmp_path):
+        from agent import model_metadata
+
+        cache_path = tmp_path / "endpoint_probe_failures.yaml"
+
+        with patch("agent.model_metadata._get_endpoint_probe_failure_cache_path", return_value=cache_path), \
+             patch("agent.model_metadata.requests.get", side_effect=Exception("bad token")):
+            result = model_metadata.fetch_endpoint_model_metadata(
+                "https://apibest.ai/v1",
+                api_key="bad-token",
+                force_refresh=True,
+            )
+
+        assert result == {}
+        cache_text = cache_path.read_text(encoding="utf-8")
+        assert "bad-token" not in cache_text
+
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"data": [{"id": "foo", "context_length": 65536}]}
+
+        with patch("agent.model_metadata._get_endpoint_probe_failure_cache_path", return_value=cache_path), \
+             patch("agent.model_metadata.requests.get", return_value=resp) as mock_get:
+            result = model_metadata.fetch_endpoint_model_metadata(
+                "https://apibest.ai/v1",
+                api_key="good-token",
+            )
+
+        assert mock_get.call_count >= 1
+        assert result["foo"]["context_length"] == 65536
 
 
 class TestQueryLocalContextLengthNetworkError:

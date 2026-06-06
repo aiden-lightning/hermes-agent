@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gateway.platforms.base import NO_REPLY_SENTINEL
 from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
 
 
@@ -19,6 +20,9 @@ class TestCleanForDisplay:
         """Text without MEDIA: passes through unchanged."""
         text = "Here is your analysis of the image."
         assert GatewayStreamConsumer._clean_for_display(text) == text
+
+    def test_no_reply_sentinel_stripped(self):
+        assert GatewayStreamConsumer._clean_for_display(f"  {NO_REPLY_SENTINEL}\n") == ""
 
     def test_media_tag_stripped(self):
         """Basic MEDIA:<path> tag is removed."""
@@ -263,6 +267,25 @@ class TestSendOrEditMediaStripping:
         await consumer._send_or_edit("MEDIA:/tmp/image.png")
 
         adapter.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_reply_sentinel_with_cursor_skips_send(self):
+        adapter = MagicMock()
+        adapter.REQUIRES_EDIT_FINALIZE = False
+        adapter.send = AsyncMock()
+        adapter.edit_message = AsyncMock()
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        consumer = GatewayStreamConsumer(
+            adapter,
+            "chat_123",
+            StreamConsumerConfig(cursor=" ▉"),
+        )
+        result = await consumer._send_or_edit(f"{NO_REPLY_SENTINEL} ▉")
+
+        assert result is True
+        adapter.send.assert_not_called()
+        adapter.edit_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cursor_only_update_skips_send(self):

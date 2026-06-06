@@ -445,13 +445,13 @@ def _tool_call_observability_fields(function_name: str, function_args: Dict[str,
     args_text = _stable_json_text(function_args)
     fields: Dict[str, Any] = {
         "args_keys": ",".join(sorted(str(k) for k in function_args.keys())),
-        "args": args_text,
         "args_len": len(args_text),
+        "args_sha256": hashlib.sha256(args_text.encode("utf-8")).hexdigest()[:16],
     }
     if function_name == "terminal":
         command = function_args.get("command", "")
-        fields["command"] = command
         fields["command_len"] = len(command or "")
+        fields["command_sha256"] = hashlib.sha256(str(command or "").encode("utf-8")).hexdigest()[:16]
 
     if function_result is not None:
         parsed = None
@@ -473,10 +473,8 @@ def _tool_call_observability_fields(function_name: str, function_args: Dict[str,
 
 
 def _format_observability_fields(fields: Dict[str, Any]) -> str:
-    raw_text_keys = {"args", "command"}
     return " ".join(
-        f"{key}={value!r}" if key in raw_text_keys and isinstance(value, str)
-        else f"{key}={value}"
+        f"{key}={value}"
         for key, value in fields.items()
     )
 
@@ -5184,6 +5182,11 @@ class AIAgent:
                     query=function_args.get("query", ""),
                     role_filter=function_args.get("role_filter"),
                     limit=function_args.get("limit", 3),
+                    session_id=function_args.get("session_id"),
+                    around_message_id=function_args.get("around_message_id"),
+                    window=function_args.get("window", 5),
+                    sort=function_args.get("sort"),
+                    profile=function_args.get("profile"),
                     db=session_db,
                     current_session_id=self.session_id,
                     source_filter=self._session_search_source_filter,
@@ -5898,6 +5901,11 @@ class AIAgent:
                         query=function_args.get("query", ""),
                         role_filter=function_args.get("role_filter"),
                         limit=function_args.get("limit", 3),
+                        session_id=function_args.get("session_id"),
+                        around_message_id=function_args.get("around_message_id"),
+                        window=function_args.get("window", 5),
+                        sort=function_args.get("sort"),
+                        profile=function_args.get("profile"),
                         db=session_db,
                         current_session_id=self.session_id,
                         source_filter=self._session_search_source_filter,

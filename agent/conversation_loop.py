@@ -1335,7 +1335,16 @@ def run_conversation(
                         )
                     return agent._interruptible_api_call(next_api_kwargs)
 
-                response = _perform_api_call(api_kwargs)
+                with _ra()._ApiCallHeartbeat(
+                    session_id=getattr(agent, "session_id", None) or "none",
+                    task_id=effective_task_id,
+                    call=api_call_count,
+                    model=(api_kwargs or {}).get("model", agent.model) if isinstance(api_kwargs, dict) else agent.model,
+                    provider=agent.provider or "unknown",
+                    api_mode=agent.api_mode,
+                    interval=_ra()._get_api_heartbeat_interval(),
+                ):
+                    response = _perform_api_call(api_kwargs)
                 
                 api_duration = time.time() - api_start_time
                 
@@ -2660,7 +2669,7 @@ def run_conversation(
                     "model api call failed session=%s task_id=%s call=%d duration=%.2fs model=%s provider=%s api_mode=%s error_type=%s status_code=%s summary=%s",
                     getattr(agent, "session_id", "") or "none",
                     effective_task_id,
-                    max(api_call_count - 1, 0),
+                    api_call_count,
                     elapsed_time,
                     (api_kwargs or {}).get("model", agent.model) if isinstance(api_kwargs, dict) else agent.model,
                     agent.provider or "unknown",

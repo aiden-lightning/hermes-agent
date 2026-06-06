@@ -2078,13 +2078,14 @@ class TestExecuteToolCalls:
         assert "tool call end" in log_text
         assert "tool=terminal" in log_text
         assert "tool_call_id=c-observe" in log_text
-        assert "args=" in log_text
         assert "args_len=" in log_text
-        assert "command=" in log_text
+        assert "args_sha256=" in log_text
+        assert "command_len=" in log_text
+        assert "command_sha256=" in log_text
         assert "status=approval_required" in log_text
         assert "exit_code=0" in log_text
         assert "approval_required=True" in log_text
-        assert raw_token in log_text
+        assert raw_token not in log_text
 
     def test_tool_call_observability_respects_redacting_formatter(self, monkeypatch):
         from agent.redact import RedactingFormatter
@@ -2097,7 +2098,7 @@ class TestExecuteToolCalls:
             )
         )
 
-        assert raw_token in fields
+        assert raw_token not in fields
         monkeypatch.setattr("agent.redact._REDACT_ENABLED", True)
 
         formatter = RedactingFormatter("%(message)s")
@@ -2114,7 +2115,7 @@ class TestExecuteToolCalls:
 
         assert raw_token not in formatted
         assert "tool call start" in formatted
-        assert "command=" in formatted
+        assert "command_sha256=" in formatted
 
     def test_api_call_heartbeat_logs_periodic_wait(self, caplog):
         caplog.set_level(logging.INFO, logger=run_agent.logger.name)
@@ -4638,7 +4639,7 @@ class TestRetryExhaustion:
         assert "model api call failed" in log_text
         assert "session=" in log_text
         assert "task_id=" in log_text
-        assert "call=0" in log_text
+        assert "call=1" in log_text
         assert "duration=" in log_text
         assert "model=" in log_text
         assert "provider=" in log_text

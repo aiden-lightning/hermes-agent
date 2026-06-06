@@ -1641,6 +1641,48 @@ class TestAdapterBehavior(unittest.TestCase):
         self.assertEqual(cached[0].open_id, "ou_alice")
         self.assertEqual(cached[0].union_id, "on_alice")
 
+    @patch.dict(
+        os.environ,
+        {
+            "FEISHU_GROUP_POLICY": "allowlist",
+            "FEISHU_ALLOWED_USERS": "ou_allowed",
+            "FEISHU_BOT_NAME": "Hermes",
+        },
+        clear=True,
+    )
+    def test_policy_rejected_group_message_is_not_cached(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.feishu import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig())
+        adapter._bot_open_id = "ou_bot"
+        adapter._dispatch_inbound_event = AsyncMock()
+        adapter._is_duplicate = Mock(return_value=False)
+        adapter._resolve_sender_profile = AsyncMock(return_value={"user_name": "Blocked"})
+
+        message = SimpleNamespace(
+            message_id="om_blocked_1",
+            chat_type="group",
+            chat_id="oc_group",
+            message_type="text",
+            content='{"text":"@_user_1 blocked context"}',
+            mentions=[
+                SimpleNamespace(
+                    key="@_user_1",
+                    name="Hermes",
+                    id=SimpleNamespace(open_id="ou_bot", user_id=None),
+                )
+            ],
+        )
+        sender_id = SimpleNamespace(open_id="ou_blocked", user_id=None, union_id=None)
+        data = SimpleNamespace(event=SimpleNamespace(message=message, sender=SimpleNamespace(sender_id=sender_id)))
+
+        asyncio.run(adapter._handle_message_event_data(data))
+
+        adapter._dispatch_inbound_event.assert_not_awaited()
+        adapter._resolve_sender_profile.assert_not_awaited()
+        self.assertNotIn("oc_group", getattr(adapter, "_group_message_history", {}))
+
     @patch.dict(os.environ, {"FEISHU_GROUP_POLICY": "open"}, clear=True)
     def test_group_mention_injects_configured_number_of_cached_messages(self):
         from gateway.config import PlatformConfig

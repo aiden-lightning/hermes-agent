@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from gateway.platforms.base import BasePlatformAdapter as _BasePlatformAdapter
+from gateway.platforms.base import NO_REPLY_SENTINEL
 from gateway.platforms.base import _custom_unit_to_cp
 from gateway.platforms.base import _strip_media_directives_for_display
 from gateway.config import (
@@ -678,6 +679,8 @@ class GatewayStreamConsumer:
         stream finishes — we just need to hide the raw directives from the
         user.
         """
+        if text.strip() == NO_REPLY_SENTINEL:
+            return ""
         if "MEDIA:" not in text and "[[audio_as_voice]]" not in text:
             return text
         cleaned = text.replace("[[audio_as_voice]]", "")
@@ -1152,6 +1155,8 @@ class GatewayStreamConsumer:
         if self.cfg.cursor:
             visible_without_cursor = visible_without_cursor.replace(self.cfg.cursor, "")
         _visible_stripped = visible_without_cursor.strip()
+        if _visible_stripped == NO_REPLY_SENTINEL:
+            return True
         if not _visible_stripped:
             return True  # cursor-only / whitespace-only update
         if not text.strip():

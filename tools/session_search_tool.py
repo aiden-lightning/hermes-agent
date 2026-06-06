@@ -177,7 +177,38 @@ def _locate_session_db(session_id: str):
     return None, None
 
 
-def _read_session(db, session_id: str, head: int = 20, tail: int = 10) -> str:
+def _session_visible(
+    meta: Dict[str, Any],
+    source_filter: list[str] = None,
+    user_id_filter: list[str] = None,
+    include_unowned_user_sessions: bool = False,
+) -> bool:
+    if not meta:
+        return False
+    if source_filter is not None:
+        allowed_sources = [str(v).strip() for v in source_filter if str(v).strip()]
+        if not allowed_sources or str(meta.get("source") or "").strip() not in allowed_sources:
+            return False
+    if user_id_filter is not None or include_unowned_user_sessions:
+        allowed_users = [str(v).strip() for v in (user_id_filter or []) if str(v).strip()]
+        session_user = str(meta.get("user_id") or "").strip()
+        if allowed_users and session_user in allowed_users:
+            return True
+        if include_unowned_user_sessions and not session_user:
+            return True
+        return False
+    return True
+
+
+def _read_session(
+    db,
+    session_id: str,
+    head: int = 20,
+    tail: int = 10,
+    source_filter: list[str] = None,
+    user_id_filter: list[str] = None,
+    include_unowned_user_sessions: bool = False,
+) -> str:
     """Read shape: dump a whole session by id (head + tail when large).
 
     Serves the linked-session case — the user dropped an @session reference and
@@ -191,6 +222,13 @@ def _read_session(db, session_id: str, head: int = 20, tail: int = 10) -> str:
         logging.debug("get_session failed for %s: %s", session_id, e, exc_info=True)
         meta = {}
     if not meta:
+        return tool_error(f"session_id not found: {session_id}", success=False)
+    if not _session_visible(
+        meta,
+        source_filter=source_filter,
+        user_id_filter=user_id_filter,
+        include_unowned_user_sessions=include_unowned_user_sessions,
+    ):
         return tool_error(f"session_id not found: {session_id}", success=False)
 
     try:
@@ -290,6 +328,9 @@ def _scroll(
     around_message_id: int,
     window: int = 5,
     current_session_id: str = None,
+    source_filter: list[str] = None,
+    user_id_filter: list[str] = None,
+    include_unowned_user_sessions: bool = False,
 ) -> str:
     """Scroll shape: return a window of messages centered on an anchor.
 
@@ -333,6 +374,13 @@ def _scroll(
         session_meta = {}
     if not session_meta:
         return tool_error(f"session_id not found: {session_id}", success=False)
+    if not _session_visible(
+        session_meta,
+        source_filter=source_filter,
+        user_id_filter=user_id_filter,
+        include_unowned_user_sessions=include_unowned_user_sessions,
+    ):
+        return tool_error(f"session_id not found: {session_id}", success=False)
 
     # Fetch the window
     try:
@@ -374,9 +422,17 @@ def _scroll(
                             f"(child of {session_id}); rebound transparently"
                         )
                         try:
-                            session_meta = db.get_session(owning) or session_meta
+                            rebound_meta = db.get_session(owning) or session_meta
                         except Exception:
-                            pass
+                            rebound_meta = session_meta
+                        if not _session_visible(
+                            rebound_meta,
+                            source_filter=source_filter,
+                            user_id_filter=user_id_filter,
+                            include_unowned_user_sessions=include_unowned_user_sessions,
+                        ):
+                            return tool_error(f"session_id not found: {owning}", success=False)
+                        session_meta = rebound_meta
                         session_id = owning
                 except Exception as e:
                     logging.debug("rebind get_messages_around failed: %s", e, exc_info=True)
@@ -585,12 +641,21 @@ def session_search(
             around_message_id=around_message_id,
             window=window,
             current_session_id=current_session_id,
+            source_filter=source_filter,
+            user_id_filter=user_id_filter,
+            include_unowned_user_sessions=include_unowned_user_sessions,
         )
 
     # Read shape: a session_id with no anchor → dump the whole session.
     if isinstance(session_id, str) and session_id.strip():
         sid = session_id.strip()
-        result = _read_session(db, sid)
+        result = _read_session(
+            db,
+            sid,
+            source_filter=source_filter,
+            user_id_filter=user_id_filter,
+            include_unowned_user_sessions=include_unowned_user_sessions,
+        )
         if json.loads(result).get("success"):
             return result
 
@@ -600,7 +665,13 @@ def session_search(
         located, owner = _locate_session_db(sid)
         if located is not None:
             try:
-                found = json.loads(_read_session(located, sid))
+                found = json.loads(_read_session(
+                    located,
+                    sid,
+                    source_filter=source_filter,
+                    user_id_filter=user_id_filter,
+                    include_unowned_user_sessions=include_unowned_user_sessions,
+                ))
             finally:
                 located.close()
             if found.get("success"):

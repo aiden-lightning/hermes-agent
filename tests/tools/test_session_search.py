@@ -396,6 +396,31 @@ class TestScrollShape:
         ))
         assert result["success"] is False
 
+    def test_scroll_applies_user_filter_to_direct_session_id(self, db):
+        db.create_session("s_owner", source="feishu", user_id="ou_owner")
+        mid = db.append_message("s_owner", role="user", content="owner-only context")
+        db._conn.commit()
+
+        denied = json.loads(session_search(
+            session_id="s_owner",
+            around_message_id=mid,
+            db=db,
+            source_filter=["feishu"],
+            user_id_filter=["ou_other"],
+        ))
+        allowed = json.loads(session_search(
+            session_id="s_owner",
+            around_message_id=mid,
+            db=db,
+            source_filter=["feishu"],
+            user_id_filter=["ou_owner"],
+        ))
+
+        assert denied["success"] is False
+        assert "owner-only context" not in json.dumps(denied)
+        assert allowed["success"] is True
+        assert allowed["mode"] == "scroll"
+
 
 class TestScrollPattern:
     """The forward/backward scroll loop using tool output."""
@@ -669,6 +694,29 @@ class TestReadShape:
         assert result["message_count"] == 50
         assert result["truncated"] is True
         assert len(result["messages"]) == 30  # head 20 + tail 10
+
+    def test_read_applies_user_filter_to_direct_session_id(self, db):
+        db.create_session("s_owner", source="feishu", user_id="ou_owner")
+        db.append_message("s_owner", role="user", content="owner-only transcript")
+        db._conn.commit()
+
+        denied = json.loads(session_search(
+            session_id="s_owner",
+            db=db,
+            source_filter=["feishu"],
+            user_id_filter=["ou_other"],
+        ))
+        allowed = json.loads(session_search(
+            session_id="s_owner",
+            db=db,
+            source_filter=["feishu"],
+            user_id_filter=["ou_owner"],
+        ))
+
+        assert denied["success"] is False
+        assert "owner-only transcript" not in json.dumps(denied)
+        assert allowed["success"] is True
+        assert allowed["mode"] == "read"
 
 
 # =========================================================================

@@ -5,6 +5,7 @@ and run_agent.py for pre-flight context checks.
 """
 
 import ipaddress
+import hashlib
 import logging
 import os
 import re
@@ -111,6 +112,12 @@ _endpoint_model_metadata_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
 _endpoint_model_metadata_cache_time: Dict[str, float] = {}
 _ENDPOINT_MODEL_CACHE_TTL = 300
 _ENDPOINT_PROBE_FAILURE_CACHE_TTL = 300
+
+
+def _endpoint_metadata_cache_key(base_url: str, api_key: str = "") -> str:
+    key_material = str(api_key or "")
+    key_hash = hashlib.sha256(key_material.encode("utf-8")).hexdigest()[:16] if key_material else "none"
+    return f"{base_url}#key={key_hash}"
 
 # Descending tiers for context length probing when the model is unknown.
 # We start at 256K (covers GPT-5.x, many current large-context models) and
@@ -668,6 +675,7 @@ def fetch_endpoint_model_metadata(
     normalized = _normalize_base_url(base_url)
     if not normalized or _is_openrouter_base_url(normalized):
         return {}
+    cache_key = _endpoint_metadata_cache_key(normalized, api_key)
 
     use_persistent_failure_cache = (
         _is_custom_endpoint(normalized)
@@ -676,7 +684,7 @@ def fetch_endpoint_model_metadata(
     )
 
     if use_persistent_failure_cache and not force_refresh:
-        failed_at = _get_recent_endpoint_probe_failure(normalized)
+        failed_at = _get_recent_endpoint_probe_failure(cache_key)
         if failed_at is not None:
             logger.debug(
                 "Skipping %s/models probe due to recent cached failure at %s",
@@ -686,8 +694,8 @@ def fetch_endpoint_model_metadata(
             return {}
 
     if not force_refresh:
-        cached = _endpoint_model_metadata_cache.get(normalized)
-        cached_at = _endpoint_model_metadata_cache_time.get(normalized, 0)
+        cached = _endpoint_model_metadata_cache.get(cache_key)
+        cached_at = _endpoint_model_metadata_cache_time.get(cache_key, 0)
         if cached is not None and (time.time() - cached_at) < _ENDPOINT_MODEL_CACHE_TTL:
             return cached
 
@@ -748,10 +756,10 @@ def fetch_endpoint_model_metadata(
                     if isinstance(alt_id, str) and alt_id and alt_id != model_id:
                         _add_model_aliases(cache, alt_id, entry)
 
-                _endpoint_model_metadata_cache[normalized] = cache
-                _endpoint_model_metadata_cache_time[normalized] = time.time()
+                _endpoint_model_metadata_cache[cache_key] = cache
+                _endpoint_model_metadata_cache_time[cache_key] = time.time()
                 if use_persistent_failure_cache:
-                    _clear_endpoint_probe_failure(normalized)
+                    _clear_endpoint_probe_failure(cache_key)
                 return cache
         except Exception as exc:
             last_error = exc
@@ -804,10 +812,10 @@ def fetch_endpoint_model_metadata(
                 except Exception:
                     pass
 
-            _endpoint_model_metadata_cache[normalized] = cache
-            _endpoint_model_metadata_cache_time[normalized] = time.time()
+            _endpoint_model_metadata_cache[cache_key] = cache
+            _endpoint_model_metadata_cache_time[cache_key] = time.time()
             if use_persistent_failure_cache:
-                _clear_endpoint_probe_failure(normalized)
+                _clear_endpoint_probe_failure(cache_key)
             return cache
         except Exception as exc:
             last_error = exc
@@ -815,9 +823,9 @@ def fetch_endpoint_model_metadata(
     if last_error:
         logger.debug("Failed to fetch model metadata from %s/models: %s", normalized, last_error)
     if use_persistent_failure_cache:
-        _record_endpoint_probe_failure(normalized)
-    _endpoint_model_metadata_cache[normalized] = {}
-    _endpoint_model_metadata_cache_time[normalized] = time.time()
+        _record_endpoint_probe_failure(cache_key)
+    _endpoint_model_metadata_cache[cache_key] = {}
+    _endpoint_model_metadata_cache_time[cache_key] = time.time()
     return {}
 
 

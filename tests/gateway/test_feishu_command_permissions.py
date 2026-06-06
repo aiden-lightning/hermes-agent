@@ -66,6 +66,7 @@ def _make_runner(
     )
     adapter = MagicMock()
     adapter.send = AsyncMock()
+    adapter._send_with_retry = AsyncMock()
     runner.adapters = {Platform.FEISHU: adapter}
     runner._voice_mode = {}
     runner.hooks = SimpleNamespace(
@@ -226,6 +227,31 @@ async def test_feishu_member_plain_text_resolves_pending_clarify_when_plain_text
         assert cm.wait_for_response("clarify-feishu-perms", timeout=0) == "use option B"
     finally:
         cm.clear_session(build_session_key(source))
+
+
+@pytest.mark.asyncio
+async def test_feishu_busy_steer_plain_text_respects_command_permissions():
+    runner = _make_runner(
+        admins=["ou_admin"],
+        command_permissions={"allowed_commands": ["status"], "allow_plain_text": False},
+    )
+    runner._busy_input_mode = "steer"
+    source = _make_source()
+    session_key = build_session_key(source)
+    running_agent = MagicMock()
+    running_agent.steer.return_value = True
+    runner._running_agents[session_key] = running_agent
+
+    handled = await runner._handle_active_session_busy_message(
+        _make_event("inject this", source=source),
+        session_key,
+    )
+
+    assert handled is True
+    running_agent.steer.assert_not_called()
+    adapter = runner.adapters[Platform.FEISHU]
+    adapter._send_with_retry.assert_awaited_once()
+    assert "free-form prompts" in adapter._send_with_retry.call_args.kwargs["content"].lower()
 
 
 @pytest.mark.asyncio

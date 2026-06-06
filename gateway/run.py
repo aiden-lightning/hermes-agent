@@ -3439,12 +3439,33 @@ class GatewayRunner:
             )
             return True  # handled (silently dropped); do not fall through
 
+        adapter = self.adapters.get(event.source.platform)
+        if not adapter:
+            return False  # let default path handle it
+
+        from hermes_cli.commands import resolve_command as _resolve_cmd
+
+        command = event.get_command()
+        _cmd_def = _resolve_cmd(command) if command else None
+        canonical = _cmd_def.name if _cmd_def else command
+        permission_denial = self._check_command_permissions(
+            event,
+            raw_command=command,
+            canonical_command=canonical,
+        )
+        if permission_denial:
+            reply_anchor = self._reply_anchor_for_event(event)
+            thread_meta = self._thread_metadata_for_source(event.source, reply_anchor)
+            await adapter._send_with_retry(
+                chat_id=event.source.chat_id,
+                content=permission_denial,
+                reply_to=reply_anchor,
+                metadata=thread_meta,
+            )
+            return True
+
         # --- Draining case (gateway restarting/stopping) ---
         if self._draining:
-            adapter = self.adapters.get(event.source.platform)
-            if not adapter:
-                return True
-
             reply_anchor = self._reply_anchor_for_event(event)
             thread_meta = self._thread_metadata_for_source(event.source, reply_anchor)
             if self._queue_during_drain_enabled():
@@ -3468,10 +3489,6 @@ class GatewayRunner:
             return True
 
         # Normal busy case (agent actively running a task)
-        adapter = self.adapters.get(event.source.platform)
-        if not adapter:
-            return False  # let default path handle it
-
         running_agent = self._running_agents.get(session_key)
 
         effective_mode = self._busy_input_mode
@@ -18380,7 +18397,6 @@ class GatewayRunner:
                 enabled_toolsets,
                 combined_ephemeral,
                 cache_keys=self._extract_cache_busting_config(user_config),
-                session_search_filters=session_search_filters,
                 session_search_filters=session_search_filters,
                 user_id=getattr(source, "user_id", None),
                 user_id_alt=getattr(source, "user_id_alt", None),

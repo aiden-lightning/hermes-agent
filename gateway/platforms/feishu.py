@@ -3126,6 +3126,13 @@ class FeishuAdapter(BasePlatformAdapter):
         chat_id = getattr(message, "chat_id", "") or ""
         is_bot = _is_bot_sender(sender)
         admit_reason = self._admit(sender, message)
+        if (
+            admit_reason == "group_policy_rejected"
+            and chat_type != "p2p"
+            and not self._allow_group_message(sender_id, chat_id, is_bot=is_bot)
+        ):
+            logger.debug("[Feishu] dropping inbound event: %s", admit_reason)
+            return
         if admit_reason is not None and not (
             admit_reason == "group_policy_rejected"
             and chat_type != "p2p"
