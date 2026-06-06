@@ -690,6 +690,19 @@ class GatewayStreamConsumer:
         # Strip trailing whitespace/newlines but preserve leading content
         return cleaned.rstrip()
 
+    @staticmethod
+    def _no_reply_sentinel_candidate(text: str, cursor: str = "") -> str:
+        """Return visible text for no-reply sentinel prefix checks."""
+        candidate = text
+        if cursor:
+            candidate = candidate.replace(cursor, "")
+        return candidate.strip()
+
+    @classmethod
+    def _is_no_reply_sentinel_or_prefix(cls, text: str, cursor: str = "") -> bool:
+        candidate = cls._no_reply_sentinel_candidate(text, cursor)
+        return bool(candidate) and NO_REPLY_SENTINEL.startswith(candidate)
+
     async def _send_new_chunk(self, text: str, reply_to_id: Optional[str]) -> Optional[str]:
         """Send a new message chunk, optionally threaded to a previous message.
 
@@ -1155,7 +1168,7 @@ class GatewayStreamConsumer:
         if self.cfg.cursor:
             visible_without_cursor = visible_without_cursor.replace(self.cfg.cursor, "")
         _visible_stripped = visible_without_cursor.strip()
-        if _visible_stripped == NO_REPLY_SENTINEL:
+        if self._is_no_reply_sentinel_or_prefix(text, self.cfg.cursor):
             return True
         if not _visible_stripped:
             return True  # cursor-only / whitespace-only update

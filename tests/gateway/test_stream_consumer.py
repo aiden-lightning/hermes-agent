@@ -288,6 +288,25 @@ class TestSendOrEditMediaStripping:
         adapter.edit_message.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_no_reply_sentinel_prefix_with_cursor_skips_send(self):
+        adapter = MagicMock()
+        adapter.REQUIRES_EDIT_FINALIZE = False
+        adapter.send = AsyncMock()
+        adapter.edit_message = AsyncMock()
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        consumer = GatewayStreamConsumer(
+            adapter,
+            "chat_123",
+            StreamConsumerConfig(cursor=" ▉"),
+        )
+        result = await consumer._send_or_edit(f"{NO_REPLY_SENTINEL[:9]} ▉")
+
+        assert result is True
+        adapter.send.assert_not_called()
+        adapter.edit_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_cursor_only_update_skips_send(self):
         """A bare streaming cursor should not be sent as its own message."""
         adapter = MagicMock()
@@ -425,6 +444,34 @@ class TestStreamRunMediaStripping:
             assert "MEDIA:" not in sent_text, f"MEDIA: leaked into display: {sent_text!r}"
 
         assert consumer.already_sent
+
+
+class TestNoReplySentinelStreaming:
+    @pytest.mark.asyncio
+    async def test_split_no_reply_sentinel_never_sends_visible_prefix(self):
+        adapter = MagicMock()
+        adapter.REQUIRES_EDIT_FINALIZE = False
+        adapter.send = AsyncMock()
+        adapter.edit_message = AsyncMock()
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        consumer = GatewayStreamConsumer(
+            adapter,
+            "chat_123",
+            StreamConsumerConfig(edit_interval=0.0, buffer_threshold=1, cursor=" ▉"),
+        )
+        task = asyncio.create_task(consumer.run())
+
+        split_at = 9
+        consumer.on_delta(NO_REPLY_SENTINEL[:split_at])
+        await asyncio.sleep(0.05)
+        consumer.on_delta(NO_REPLY_SENTINEL[split_at:])
+        consumer.finish()
+        await task
+
+        adapter.send.assert_not_called()
+        adapter.edit_message.assert_not_called()
+        assert consumer.final_response_sent is True
 
 
 # ── Segment break (tool boundary) tests ──────────────────────────────────
