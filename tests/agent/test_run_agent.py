@@ -115,6 +115,35 @@ def test_flush_persist_override_replaces_api_local_multimodal_note(agent):
     assert api_content[0]["text"] == "[MODEL SWITCH NOTE]\n\nDescribe this screenshot"
 
 
+def test_aiagent_accepts_gateway_session_scope_kwargs():
+    with (
+        patch(
+            "model_tools.get_tool_definitions", return_value=[]
+        ),
+        patch("model_tools.check_toolset_requirements", return_value={}),
+        patch("agent.process_bootstrap.OpenAI"),
+    ):
+        agent = AIAgent(
+            api_key="test-key-1234567890",
+            base_url="https://openrouter.ai/api/v1",
+            quiet_mode=True,
+            skip_context_files=True,
+            skip_memory=True,
+            platform="feishu",
+            user_id="sender-user",
+            user_id_alt="stable-user",
+            session_owner_user_id="owner-user",
+            session_search_source_filter=["feishu"],
+            session_search_user_id_filter=["owner-user", "stable-user"],
+            session_search_include_unowned_user_sessions=True,
+        )
+
+    assert agent._session_owner_user_id == "owner-user"
+    assert agent._session_search_source_filter == ["feishu"]
+    assert agent._session_search_user_id_filter == ["owner-user", "stable-user"]
+    assert agent._session_search_include_unowned_user_sessions is True
+
+
 def test_direct_session_db_flushes_share_marker_claim(agent):
     """A direct flush cannot interleave its marker check with `_persist_session`."""
     class _BarrierDB:
