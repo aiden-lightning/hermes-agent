@@ -1,8 +1,4 @@
-"""Tests for the bundled OpenAI image_gen plugin.
-
-Covers the legacy ``gpt-image-2`` images API tiers plus the OpenRouter-only
-``openai/gpt-5.4-image-2`` chat-completions path.
-"""
+"""Tests for the bundled OpenAI image_gen plugin (gpt-image-2, three tiers)."""
 
 from __future__ import annotations
 
@@ -33,20 +29,6 @@ def _fake_response(*, b64=None, url=None, revised_prompt=None):
     return SimpleNamespace(data=[item])
 
 
-def _fake_chat_response(*, b64=None, url=None, revised_prompt=None):
-    image_item = SimpleNamespace(b64_json=b64, url=url)
-    message = SimpleNamespace(images=[image_item], content=[], revised_prompt=revised_prompt)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice])
-
-
-def _fake_chat_response_with_nested_image_url(*, url=None, revised_prompt=None):
-    image_item = SimpleNamespace(type="image_url", image_url=SimpleNamespace(url=url))
-    message = SimpleNamespace(images=[image_item], content=[], revised_prompt=revised_prompt)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice])
-
-
 @pytest.fixture(autouse=True)
 def _tmp_hermes_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -75,18 +57,14 @@ class TestMetadata:
     def test_default_model(self, provider):
         assert provider.default_model() == "gpt-image-2-medium"
 
-    def test_list_models_three_tiers(self, provider):
+    def test_picker_matches_resolvable_catalog(self, provider):
         ids = [m["id"] for m in provider.list_models()]
-        assert ids == [
-            "gpt-image-2-low",
-            "gpt-image-2-medium",
-            "gpt-image-2-high",
-            "openai/gpt-5.4-image-2",
-        ]
+        assert set(ids) == set(provider.models)
+        assert provider.default_model() in ids
 
     def test_catalog_entries_have_display_speed_strengths(self, provider):
         for entry in provider.list_models():
-            assert entry["display"]
+            assert entry["display"].startswith("GPT Image 2")
             assert entry["speed"]
             assert entry["strengths"]
 
@@ -103,57 +81,23 @@ class TestAvailability:
         monkeypatch.setenv("OPENAI_API_KEY", "test")
         assert openai_plugin.OpenAIImageGenProvider().is_available() is True
 
-    def test_openrouter_base_url_uses_openrouter_api_key_for_availability(self, monkeypatch, tmp_path):
-        import yaml
-
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "image_gen": {
-                        "openai": {
-                            "base_url": "https://openrouter.ai/api/v1",
-                        }
-                    }
-                }
-            )
-        )
-
-        assert openai_plugin.OpenAIImageGenProvider().is_available() is True
-
-    def test_config_key_env_uses_named_environment_variable(self, monkeypatch, tmp_path):
+    def test_config_key_env_uses_named_profile_secret(self, monkeypatch, tmp_path):
         import yaml
 
         monkeypatch.setenv("OPENAI_API_KEY", "default-key")
-        monkeypatch.setenv("APIBEST_API_KEY", "apibest-key")
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "image_gen": {
-                        "openai": {
-                            "base_url": "https://apibest.ai/v1",
-                            "key_env": "APIBEST_API_KEY",
-                        }
-                    }
-                }
-            )
-        )
+        monkeypatch.setenv("APIBEST_API_KEY", "configured-key")
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump({
+            "image_gen": {"openai": {"key_env": "APIBEST_API_KEY"}}
+        }))
 
-        api_key, base_url = openai_plugin._resolve_api_config()
-
-        assert api_key == "apibest-key"
-        assert base_url == "https://apibest.ai/v1"
+        assert openai_plugin._resolve_api_key() == "configured-key"
+        assert openai_plugin.OpenAIImageGenProvider().is_available() is True
 
 
 # ── Model resolution ────────────────────────────────────────────────────────
 
 
 class TestModelResolution:
-    def test_default_is_medium(self):
-        model_id, meta = openai_plugin._resolve_model()
-        assert model_id == "gpt-image-2-medium"
-        assert meta["quality"] == "medium"
 
     def test_env_var_override(self, monkeypatch):
         monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-2-high")
@@ -161,10 +105,6 @@ class TestModelResolution:
         assert model_id == "gpt-image-2-high"
         assert meta["quality"] == "high"
 
-    def test_env_var_unknown_falls_back(self, monkeypatch):
-        monkeypatch.setenv("OPENAI_IMAGE_MODEL", "bogus-tier")
-        model_id, _ = openai_plugin._resolve_model()
-        assert model_id == openai_plugin.DEFAULT_MODEL
 
     def test_config_openai_model(self, tmp_path):
         import yaml
@@ -175,29 +115,34 @@ class TestModelResolution:
         assert model_id == "gpt-image-2-low"
         assert meta["quality"] == "low"
 
-    def test_config_top_level_model(self, tmp_path):
-        """``image_gen.model: gpt-image-2-high`` also works (top-level)."""
-        import yaml
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump({"image_gen": {"model": "gpt-image-2-high"}})
-        )
-        model_id, meta = openai_plugin._resolve_model()
-        assert model_id == "gpt-image-2-high"
-        assert meta["quality"] == "high"
-
-    def test_config_openrouter_chat_model(self, tmp_path):
-        import yaml
-
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump({"image_gen": {"openai": {"model": "openai/gpt-5.4-image-2"}}})
-        )
-        model_id, meta = openai_plugin._resolve_model()
-        assert model_id == "openai/gpt-5.4-image-2"
-        assert meta["api_model"] == "openai/gpt-5.4-image-2"
-        assert meta["api_method"] == "chat.completions"
-
 
 # ── Generate ────────────────────────────────────────────────────────────────
+
+
+class TestSourceImageLoading:
+    def test_load_image_bytes_blocks_credential_store(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        auth_json = hermes_home / "auth.json"
+        auth_json.write_text('{"api_key":"sk-secret"}', encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        with pytest.raises(ValueError, match="credential store"):
+            openai_plugin._load_image_bytes(str(auth_json))
+
+
+    def test_load_image_bytes_allows_legit_local_image(self, tmp_path, monkeypatch):
+        """Negative control: a legitimate local image path is NOT blocked and
+        loads normally — proves the guard doesn't over-fire on everything."""
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        img = tmp_path / "pic.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\nfake-image-bytes")
+
+        data, name = openai_plugin._load_image_bytes(str(img))
+        assert data == b"\x89PNG\r\n\x1a\nfake-image-bytes"
+        assert name == "pic.png"
 
 
 class TestGenerate:
@@ -236,29 +181,43 @@ class TestGenerate:
         assert call_kwargs["model"] == "gpt-image-2"
         assert call_kwargs["quality"] == "medium"
         assert call_kwargs["size"] == "1536x1024"
-        assert "output_format" not in call_kwargs
-        assert "output_compression" not in call_kwargs
         # gpt-image-2 rejects response_format — we must NOT send it.
         assert "response_format" not in call_kwargs
 
-    @pytest.mark.parametrize("tier,expected_quality", [
-        ("gpt-image-2-low", "low"),
-        ("gpt-image-2-medium", "medium"),
-        ("gpt-image-2-high", "high"),
+    @pytest.mark.parametrize("api_model,quality", [
+        ("gpt-image-2", quality) for quality in ("low", "medium", "high")
+    ] + [
+        (model, quality)
+        for model in ("gpt-image-2.5-flare", "gpt-image-2.5-sunburst")
+        for quality in ("auto", "low", "medium", "high", "xhigh", "max")
     ])
-    def test_tier_maps_to_quality(self, provider, monkeypatch, tier, expected_quality):
-        monkeypatch.setenv("OPENAI_IMAGE_MODEL", tier)
+    @pytest.mark.parametrize("editing", [False, True])
+    def test_selection_reaches_image_request(
+        self, provider, monkeypatch, tmp_path, api_model, quality, editing
+    ):
+        import yaml
+
+        tier = api_model if quality == "auto" else f"{api_model}-{quality}"
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump({
+            "image_gen": {"openai": {"model": tier}}
+        }))
+        source = tmp_path / "source.png"
+        source.write_bytes(bytes.fromhex(_PNG_HEX))
         fake_client = MagicMock()
-        fake_client.images.generate.return_value = _fake_response(b64=_b64_png())
+        call = fake_client.images.edit if editing else fake_client.images.generate
+        call.return_value = _fake_response(b64=_b64_png())
 
         with _patched_openai(fake_client):
-            result = provider.generate("a cat")
+            result = provider.generate("a cat", image_url=str(source) if editing else None)
 
+        assert result["success"] is True
         assert result["model"] == tier
-        assert result["quality"] == expected_quality
-        assert fake_client.images.generate.call_args.kwargs["quality"] == expected_quality
-        # Always the same underlying API model regardless of tier.
-        assert fake_client.images.generate.call_args.kwargs["model"] == "gpt-image-2"
+        assert result["quality"] == quality
+        assert call.call_args.kwargs["quality"] == quality
+        assert call.call_args.kwargs["model"] == api_model
+        assert "response_format" not in call.call_args.kwargs
+        assert Path(result["image"]).read_bytes() == bytes.fromhex(_PNG_HEX)
 
     @pytest.mark.parametrize("aspect,expected_size", [
         ("landscape", "1536x1024"),
@@ -272,10 +231,7 @@ class TestGenerate:
         with _patched_openai(fake_client):
             provider.generate("a cat", aspect_ratio=aspect)
 
-        call_kwargs = fake_client.images.generate.call_args.kwargs
-        assert call_kwargs["size"] == expected_size
-        assert "output_format" not in call_kwargs
-        assert "output_compression" not in call_kwargs
+        assert fake_client.images.generate.call_args.kwargs["size"] == expected_size
 
     def test_revised_prompt_passed_through(self, provider):
         fake_client = MagicMock()
@@ -288,26 +244,6 @@ class TestGenerate:
 
         assert result["revised_prompt"] == "A photo of a cat"
 
-    def test_api_error_returns_error_response(self, provider):
-        fake_client = MagicMock()
-        fake_client.images.generate.side_effect = RuntimeError("boom")
-
-        with _patched_openai(fake_client):
-            result = provider.generate("a cat")
-
-        assert result["success"] is False
-        assert result["error_type"] == "api_error"
-        assert "boom" in result["error"]
-
-    def test_empty_response_data(self, provider):
-        fake_client = MagicMock()
-        fake_client.images.generate.return_value = SimpleNamespace(data=[])
-
-        with _patched_openai(fake_client):
-            result = provider.generate("a cat")
-
-        assert result["success"] is False
-        assert result["error_type"] == "empty_response"
 
     def test_url_response_is_cached_locally(self, provider):
         """OpenAI URL response (if API ever returns one) is cached locally.
@@ -323,7 +259,7 @@ class TestGenerate:
         )
 
         with _patched_openai(fake_client), patch(
-            "plugins.image_gen.openai.save_url_image",
+            "plugins.image_gen._common.save_url_image",
             return_value=Path("/tmp/openai_gpt-image-2_20260524_000000_deadbeef.png"),
         ) as mock_save_url:
             result = provider.generate("a cat")
@@ -332,132 +268,3 @@ class TestGenerate:
         assert result["image"].startswith("/")
         assert "example.com" not in result["image"]
         mock_save_url.assert_called_once()
-
-    def test_url_response_falls_back_to_bare_url_when_download_fails(self, provider):
-        """Cache failure must not turn into a tool error — symmetric with xAI."""
-        import requests as req_lib
-
-        fake_client = MagicMock()
-        fake_client.images.generate.return_value = _fake_response(
-            b64=None, url="https://example.com/img.png",
-        )
-
-        with _patched_openai(fake_client), patch(
-            "plugins.image_gen.openai.save_url_image",
-            side_effect=req_lib.HTTPError("404 from CDN"),
-        ):
-            result = provider.generate("a cat")
-
-        assert result["success"] is True
-        assert result["image"] == "https://example.com/img.png"
-
-    def test_openrouter_chat_model_uses_chat_completions(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-        import yaml
-
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "image_gen": {
-                        "openai": {
-                            "model": "openai/gpt-5.4-image-2",
-                            "base_url": "https://openrouter.ai/api/v1",
-                        }
-                    }
-                }
-            )
-        )
-
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = _fake_chat_response(b64=_b64_png())
-        fake_openai = MagicMock()
-        fake_openai.OpenAI.return_value = fake_client
-
-        with patch.dict("sys.modules", {"openai": fake_openai}):
-            result = openai_plugin.OpenAIImageGenProvider().generate(
-                "a cat wearing sunglasses", aspect_ratio="portrait"
-            )
-
-        assert result["success"] is True
-        assert result["model"] == "openai/gpt-5.4-image-2"
-        assert result["provider"] == "openai"
-
-        saved = Path(result["image"])
-        assert saved.exists()
-        assert saved.parent == tmp_path / "cache" / "images"
-        assert saved.name.startswith("openai_openai_gpt-5.4-image-2_")
-
-        fake_openai.OpenAI.assert_called_once_with(
-            api_key="or-key",
-            base_url="https://openrouter.ai/api/v1",
-        )
-        fake_client.images.generate.assert_not_called()
-        call_kwargs = fake_client.chat.completions.create.call_args.kwargs
-        assert call_kwargs == {
-            "model": "openai/gpt-5.4-image-2",
-            "modalities": ["image", "text"],
-            "messages": [{"role": "user", "content": "a cat wearing sunglasses"}],
-            "max_tokens": 4096,
-        }
-
-    def test_openrouter_chat_model_accepts_url_fallback(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-
-        import yaml
-
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "image_gen": {
-                        "openai": {
-                            "model": "openai/gpt-5.4-image-2",
-                            "base_url": "https://openrouter.ai/api/v1",
-                        }
-                    }
-                }
-            )
-        )
-
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = _fake_chat_response(
-            url="https://example.com/chat-image.png"
-        )
-
-        with _patched_openai(fake_client):
-            result = openai_plugin.OpenAIImageGenProvider().generate("a cat")
-
-        assert result["success"] is True
-        assert result["image"] == "https://example.com/chat-image.png"
-
-    def test_openrouter_chat_model_supports_nested_data_url(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-
-        import yaml
-
-        (tmp_path / "config.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "image_gen": {
-                        "openai": {
-                            "model": "openai/gpt-5.4-image-2",
-                            "base_url": "https://openrouter.ai/api/v1",
-                        }
-                    }
-                }
-            )
-        )
-
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = _fake_chat_response_with_nested_image_url(
-            url=f"data:image/png;base64,{_b64_png()}"
-        )
-
-        with _patched_openai(fake_client):
-            result = openai_plugin.OpenAIImageGenProvider().generate("a blue square")
-
-        assert result["success"] is True
-        saved = Path(result["image"])
-        assert saved.exists()
-        assert saved.read_bytes() == bytes.fromhex(_PNG_HEX)

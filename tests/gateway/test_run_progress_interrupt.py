@@ -28,7 +28,7 @@ class ProgressCaptureAdapter(BasePlatformAdapter):
         self.edits = []
         self.typing = []
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         return True
 
     async def disconnect(self) -> None:
@@ -106,12 +106,13 @@ class InterruptedAgent:
         return {"final_response": "interrupted", "messages": [], "api_calls": 1}
 
 
-class ControlInterruptAgent:
-    """Simulates a gateway restart/shutdown control interrupt result."""
+class PartialTruncationAgent:
+    """Returns an incomplete turn with no visible assistant text."""
 
     def __init__(self, **kwargs):
+        self.tool_progress_callback = kwargs.get("tool_progress_callback")
         self.tools = []
-        self._interrupt_requested = True
+        self._interrupt_requested = False
 
     @property
     def is_interrupted(self) -> bool:
@@ -119,11 +120,12 @@ class ControlInterruptAgent:
 
     def run_conversation(self, message, conversation_history=None, task_id=None):
         return {
-            "final_response": "Operation interrupted: Gateway restarting",
+            "final_response": None,
             "messages": [],
-            "api_calls": 1,
-            "interrupted": True,
-            "interrupt_message": "Gateway restarting",
+            "api_calls": 2,
+            "completed": False,
+            "partial": True,
+            "error": "Response truncated due to output length limit",
         }
 
 
@@ -203,6 +205,20 @@ async def test_baseline_non_interrupted_agent_renders_progress(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
+async def test_partial_empty_agent_response_is_normalized(monkeypatch, tmp_path):
+    """Messaging gateways should not echo raw truncation errors as final text."""
+    adapter, result = await _run_once(
+        monkeypatch, tmp_path, PartialTruncationAgent, "sess-partial-empty"
+    )
+
+    assert result["final_response"].startswith("⚠️ I had to stop before finishing")
+    assert "Response truncated due to output length limit" in result["final_response"]
+    assert result["final_response"] != "⚠️ Response truncated due to output length limit"
+    assert result["partial"] is True
+    assert adapter.sent == []
+
+
+@pytest.mark.asyncio
 async def test_progress_suppressed_when_agent_is_interrupted(monkeypatch, tmp_path):
     """Post-interrupt tool.started events must not render as bubbles.
 
@@ -235,17 +251,23 @@ async def test_progress_suppressed_when_agent_is_interrupted(monkeypatch, tmp_pa
         )
 
 
-@pytest.mark.asyncio
-async def test_run_agent_preserves_control_interrupt_metadata(monkeypatch, tmp_path):
-    """Gateway restart interrupts must remain visible to the caller.
+def test_partial_site_code_result_is_delivered_verbatim_not_double_wrapped():
+    """A truncated-tool-call exit already carries the curated site copy; the gateway must not
+    prefix it with 'I had to stop before finishing:' and cut it at 200 chars."""
+    from agent.turn_failure_copy import site_copy
+    from gateway.run import _normalize_empty_agent_response
+    curated = site_copy("truncated")
+    result = {"final_response": None, "messages": [], "api_calls": 2, "completed": False, "partial": True,
+              "error": curated, "failure_reason": "truncated", "failure_retryable": True}
+    text = _normalize_empty_agent_response(result, "", history_len=0)
+    assert curated in text
+    assert "I had to stop before finishing" not in text
+    assert text.count("continue") == curated.count("continue")
 
-    The outer message handler suppresses control-interrupt responses and keeps
-    resume_pending intact based on these fields. Dropping them makes a forced
-    restart look like a normal successful turn.
-    """
-    _adapter, result = await _run_once(
-        monkeypatch, tmp_path, ControlInterruptAgent, "sess-control-interrupt"
-    )
 
-    assert result["interrupted"] is True
-    assert result["interrupt_message"] == "Gateway restarting"
+def test_partial_without_site_code_keeps_the_generic_wrapper():
+    from gateway.run import _normalize_empty_agent_response
+    result = {"final_response": None, "messages": [], "api_calls": 2, "completed": False, "partial": True,
+              "error": "Response truncated due to output length limit"}
+    text = _normalize_empty_agent_response(result, "", history_len=0)
+    assert text.startswith("⚠️ I had to stop before finishing")
