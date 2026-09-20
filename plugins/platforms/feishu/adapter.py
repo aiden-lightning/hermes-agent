@@ -1074,6 +1074,17 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
     _install_lark_ws_isolation(ws_client_module)
     _ws_isolation_state.loop = loop
     _ws_isolation_state.connect_kwargs = connect_overrides
+    original_handle_message = getattr(ws_client, "_handle_message", None)
+
+    async def _handle_message_with_activity(msg: bytes) -> None:
+        adapter._ws_last_activity = time.monotonic()
+        if original_handle_message is not None:
+            await original_handle_message(msg)
+
+    if original_handle_message is not None:
+        # The SDK calls this instance attribute as ``self._handle_message(msg)``;
+        # assigning the closure avoids descriptor rebinding across the SDK thread.
+        setattr(ws_client, "_handle_message", _handle_message_with_activity)
 
     def _configure_with_overrides(conf: Any) -> Any:
         if original_configure is None:
@@ -1094,6 +1105,8 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
         _ws_isolation_state.connect_kwargs = None
         if original_configure is not None:
             setattr(ws_client, "_configure", original_configure)
+        if original_handle_message is not None:
+            setattr(ws_client, "_handle_message", original_handle_message)
         pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
         for task in pending:
             task.cancel()
@@ -1226,7 +1239,10 @@ class FeishuAdapter(BasePlatformAdapter):
         self._sdk_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         self._sdk_executor_closing = False  # set on disconnect so a real teardown isn't resurrected
         self._ws_client = self._ws_future = self._ws_supervisor = self._ws_thread_loop = None
+        self._ws_health_task: Optional[asyncio.Task] = None
         self._ws_restart_backoff = 5.0
+        self._ws_health_restart_inflight = False
+        self._ws_last_activity = 0.0
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._webhook_runner = self._webhook_site = self._event_handler = None
         self._seen_message_ids: Dict[str, float] = {}  # message_id → seen_at (time.time())
@@ -1450,6 +1466,7 @@ class FeishuAdapter(BasePlatformAdapter):
             if self._connection_mode == "websocket":
                 # The WS thread can die without any external signal; keep a watcher alive.
                 self._ws_supervisor = asyncio.ensure_future(self._supervise_websocket_thread())
+                self._ws_health_task = asyncio.ensure_future(self._watch_websocket_health())
             self._mark_connected()
             logger.info("[Feishu] Connected in %s mode (%s)", self._connection_mode, self._domain_name)
             # Plugin-registered native handlers (lark_oapi client).
@@ -1465,6 +1482,10 @@ class FeishuAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         """Disconnect from Feishu/Lark."""
         self._running = False
+        if self._ws_health_task is not None:
+            self._ws_health_task.cancel()
+            self._ws_health_task = None
+        self._ws_health_restart_inflight = False
         if self._ws_supervisor is not None:
             self._ws_supervisor.cancel()
             self._ws_supervisor = None
@@ -3723,6 +3744,64 @@ class FeishuAdapter(BasePlatformAdapter):
                 logger.warning("[Feishu] WebSocket restart failed (retrying): %s", exc)
                 backoff = min(backoff * 2, 60.0)
 
+    def _websocket_health_timeout(self) -> float:
+        """Return the quiet-period threshold before a WS link is considered stale.
+
+        The Lark client receives a PONG after each application heartbeat.  A
+        missing frame for one heartbeat can be transient, so require a full
+        heartbeat plus timeout window before forcing a reconnect.
+        """
+        ping_interval = float(self._ws_ping_interval or 120)
+        ping_timeout = float(self._ws_ping_timeout or 60)
+        return max(90.0, ping_interval + ping_timeout + 30.0)
+
+    async def _watch_websocket_health(self) -> None:
+        """Rebuild a WS client whose SDK thread is alive but no longer receiving frames."""
+        while self._running and self._connection_mode == "websocket":
+            timeout = self._websocket_health_timeout()
+            await asyncio.sleep(min(30.0, max(5.0, timeout / 3.0)))
+            if not self._running or self._ws_client is None:
+                return
+            last_activity = self._ws_last_activity
+            if not last_activity:
+                continue
+            age = time.monotonic() - last_activity
+            if age < timeout or self._ws_health_restart_inflight:
+                continue
+            self._ws_health_restart_inflight = True
+            logger.warning(
+                "[Feishu] WebSocket heartbeat stale for %.1fs (threshold %.1fs); "
+                "requesting reconnect",
+                age,
+                timeout,
+            )
+            ws_client = self._ws_client
+            ws_thread_loop = self._ws_thread_loop
+            try:
+                # Leave the adapter client reference intact so the existing
+                # supervisor observes the future exit and performs the normal
+                # backoff/reconnect sequence.
+                if ws_client is not None:
+                    setattr(ws_client, "_auto_reconnect", False)
+                if (
+                    ws_client is not None
+                    and ws_thread_loop is not None
+                    and not ws_thread_loop.is_closed()
+                    and hasattr(ws_client, "_disconnect")
+                ):
+                    future = asyncio.run_coroutine_threadsafe(ws_client._disconnect(), ws_thread_loop)
+                    await asyncio.wait_for(asyncio.wrap_future(future), timeout=5.0)
+                    # ``lark_oapi.Client.start()`` waits on an unrelated
+                    # infinite selector after spawning its receive task.  A
+                    # clean socket close alone therefore leaves the executor
+                    # future alive and the supervisor cannot rebuild it.
+                    ws_thread_loop.call_soon_threadsafe(ws_thread_loop.stop)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("[Feishu] WebSocket health reconnect request failed: %s", exc)
+                self._ws_health_restart_inflight = False
+
     async def _connect_websocket(self) -> None:
         if not FEISHU_WEBSOCKET_AVAILABLE:
             raise RuntimeError("websockets not installed; websocket mode unavailable")
@@ -3740,6 +3819,8 @@ class FeishuAdapter(BasePlatformAdapter):
             # Without the "channel" UA tag Feishu won't push group @mention events over WS.
             extra_ua_tags=["channel"],
         )
+        self._ws_last_activity = time.monotonic()
+        self._ws_health_restart_inflight = False
         # The lark SDK owns this thread and fires every event/card callback on it; those hop back
         # to the adapter loop via run_coroutine_threadsafe, which copies the CALLER's context — so
         # whatever scope the WS thread carries is what pre-handler work (inbound media caching,
