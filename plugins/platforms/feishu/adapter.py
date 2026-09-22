@@ -101,6 +101,24 @@ from gateway.platforms._shared import (
 
 logger = logging.getLogger(__name__)
 
+
+def _feishu_message_field(message: Any, key: str) -> Any:
+    """Read an SDK message field from either an object or a webhook mapping."""
+    try:
+        return message.get(key) if isinstance(message, dict) else getattr(message, key, None)
+    except Exception:
+        return None
+
+
+def _feishu_source_thread_id(message: Any) -> Optional[str]:
+    """Return only canonical Feishu topic IDs, not ordinary reply roots."""
+    thread_id = str(_feishu_message_field(message, "thread_id") or "").strip()
+    if thread_id:
+        return thread_id
+    root_id = str(_feishu_message_field(message, "root_id") or "").strip()
+    return root_id if root_id.startswith("omt_") else None
+
+
 # --- Regex patterns ---
 _MARKDOWN_HINT_RE = re.compile(
     # Pipe table: any header line + separator line both starting with '|'.
@@ -2534,7 +2552,7 @@ class FeishuAdapter(BasePlatformAdapter):
             if hint:
                 text = f"{hint}\n\n{text}" if text else hint
 
-        thread_id = getattr(message, "thread_id", None) or getattr(message, "root_id", None) or None
+        thread_id = _feishu_source_thread_id(message)
         reply_to_message_id = (
             getattr(message, "parent_id", None) or getattr(message, "upper_message_id", None)
             or getattr(message, "root_id", None) or None

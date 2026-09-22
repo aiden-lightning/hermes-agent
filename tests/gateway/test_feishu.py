@@ -962,6 +962,55 @@ class TestAdapterBehavior(unittest.TestCase):
         # Reply anchors / slash-command thread checks read source.message_id, not event.message_id.
         self.assertEqual(event.source.message_id, "om_text")
 
+    @patch.dict(os.environ, {}, clear=True)
+    def test_inbound_root_id_distinguishes_regular_reply_from_topic(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.event import MessageType
+        from plugins.platforms.feishu.adapter import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig())
+        adapter._extract_message_content = AsyncMock(
+            return_value=("reply", MessageType.TEXT, [], [], [])
+        )
+        adapter.get_chat_info = AsyncMock(
+            return_value={"chat_id": "oc_chat", "name": "Feishu DM", "type": "dm"}
+        )
+        adapter._resolve_sender_profile = AsyncMock(
+            return_value={"user_id": "ou_user", "user_name": "User", "user_id_alt": None}
+        )
+        adapter._fetch_message_text = AsyncMock(return_value="root context")
+        adapter._dispatch_inbound_event = AsyncMock()
+        sender_id = SimpleNamespace(open_id="ou_user", user_id=None, union_id=None)
+
+        async def _process(root_id: str, message_id: str) -> None:
+            message = SimpleNamespace(
+                chat_id="oc_chat",
+                thread_id=None,
+                root_id=root_id,
+                parent_id=None,
+                upper_message_id=None,
+                message_type="text",
+                content='{"text":"reply"}',
+                message_id=message_id,
+            )
+            await adapter._process_inbound_message(
+                data=SimpleNamespace(event=SimpleNamespace(message=message)),
+                message=message,
+                sender_id=sender_id,
+                chat_type="p2p",
+                message_id=message_id,
+            )
+
+        asyncio.run(_process("om_regular_root", "om_regular_reply"))
+        asyncio.run(_process("omt_topic_root", "om_topic_reply"))
+
+        regular_event = adapter._dispatch_inbound_event.await_args_list[0].args[0]
+        topic_event = adapter._dispatch_inbound_event.await_args_list[1].args[0]
+        self.assertIsNone(regular_event.source.thread_id)
+        self.assertEqual(regular_event.reply_to_message_id, "om_regular_root")
+        self.assertEqual(topic_event.source.thread_id, "omt_topic_root")
+        self.assertEqual(topic_event.reply_to_message_id, "omt_topic_root")
+
 
     @patch.dict(
         os.environ,
